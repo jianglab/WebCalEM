@@ -24,3 +24,7 @@ env/
 Thumbs.db
 morph.py
 app-core.py
+.browsercache.json
+.eman2log.txt
+.eman2settings.json
+info/project.json

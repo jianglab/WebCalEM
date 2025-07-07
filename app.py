@@ -569,15 +569,21 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Compute tilt from ellipse parameters
         a, b, _ = current_state['ellipse_params']
-        small_axis, large_axis = sorted([a, b])
+        # Always use the smaller value as the x (horizontal) axis
+        if a < b:
+            small_axis = a  # x-axis
+            large_axis = b  # y-axis
+        else:
+            small_axis = b  # x-axis
+            large_axis = a  # y-axis
         import math
         tilt_angle = math.acos(small_axis / large_axis)
         
-        # Calculate apix from large axis (similar to resolution ring mode)
+        # Calculate apix from small x-axis (horizontal)
         resolution, _ = get_first_checked_resolution()
-        if resolution is not None and large_axis > 0:
+        if resolution is not None and small_axis > 0:
             # Use the same formula as resolution ring mode: apix = (distance * resolution) / size
-            new_apix = (large_axis * resolution) / size
+            new_apix = (small_axis * resolution) / size
             if 0.01 <= new_apix <= 6.0:
                 new_apix = round(new_apix, 3)
                 # Update UI controls
@@ -1328,11 +1334,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             import math
             tilt_angle_degrees = math.degrees(tilt_angle)
             
-            # Calculate apix from large axis
+            # Calculate apix from small axis
             resolution, _ = get_first_checked_resolution()
             apix_str = ""
-            if resolution is not None and large_axis > 0:
-                calculated_apix = (large_axis * resolution) / size
+            if resolution is not None and small_axis > 0:
+                calculated_apix = (small_axis * resolution) / size
                 if 0.01 <= calculated_apix <= 6.0:
                     apix_str = f", Apix: {calculated_apix:.3f} Å/px"
             
@@ -1462,7 +1468,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             if region is not None:
                 region_size = region.size[0]
                 full_fft_size = size
-                fft_radius = larger_x * (full_fft_size / region_size)
+                fft_radius = smaller_x * (full_fft_size / region_size)
                 
                 # Calculate apix using the same formula as other modes
                 apix_value = (fft_radius * resolution) / full_fft_size
