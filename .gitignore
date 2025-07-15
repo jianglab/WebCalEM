@@ -28,3 +28,4 @@ app-core.py
 .eman2log.txt
 .eman2settings.json
 info/project.json
+test_requirements.py
