@@ -29,3 +29,7 @@ app-core.py
 .eman2settings.json
 info/project.json
 test_requirements.py
+graphene_with_spacing.png
+*.png
+*.key
+plot.py

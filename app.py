@@ -130,14 +130,14 @@ app_ui = ui.page_sidebar(
         ),
         ),
 
-        ui.div(
-            {"style": "display: none;"},  # Hidden div for data persistence
-            ui.output_text("lattice_points_data"),
-        ),
-        ui.div(
-            {"style": "display: none;"},  # Hidden div for lattice points count
-            ui.output_text("lattice_points_count"),
-        ),
+        # ui.div(
+        #     {"style": "display: none;"},  # Hidden div for data persistence
+        #     ui.output_text("lattice_points_data"),
+        # ),
+        # ui.div(
+        #     {"style": "display: none;"},  # Hidden div for lattice points count
+        #     ui.output_text("lattice_points_count"),
+        # ),
         
         # FFT Analysis Controls
         #ui.h3("FFT Analysis Controls", style="margin-top: 20px; margin-bottom: 10px;"),
@@ -170,7 +170,17 @@ app_ui = ui.page_sidebar(
             output_widget("fft_with_circle"),
             ui.div(
                 {"style": "display: flex; flex-direction: column; gap: 5px; padding: 8px; justify-content: center; height: 20%; min-height: 80px;"},
-                ui.input_slider("contrast", "FFT Range (±σ)", min=0.1, max=5.0, value=2.0, step=0.1),
+                ui.div(
+                    {"style": "display: flex; gap: 15px; align-items: center;"},
+                    ui.div(
+                        {"style": "flex: 1;"},
+                        ui.input_slider("contrast", "FFT Range (±σ)", min=0.1, max=5.0, value=1.0, step=0.1),
+                    ),
+                    ui.div(
+                        {"style": "flex: 1; font-size: 12px; color: #666; padding-left: 10px;"},
+                        ui.output_text("tilt_output"),
+                    ),
+                ),
                 ui.div(
                     {"style": "display: flex; gap: 10px; justify-content: center;"},
                     ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary"),
@@ -668,15 +678,17 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_state = fft_state.get()
         new_state = current_state.copy()
         
-        if current_state['mode'] == 'Resolution Ring':
+        # Check the actual UI mode instead of stored mode to avoid sync issues
+        current_ui_mode = input.label_mode()
+        
+        if current_ui_mode == 'Resolution Ring':
             # Clear resolution ring markers
             new_state['resolution_radius'] = None
             new_state['resolution_click_x'] = None
             new_state['resolution_click_y'] = None
-        elif current_state['mode'] == 'Lattice Point':
+        elif current_ui_mode == 'Lattice Point':
             # Clear lattice points, ellipse, and tilt info
             new_state['lattice_points'] = []
-            #new_state['drawn_circles'] = []
             new_state['ellipse_params'] = None
             new_state['tilt_info'] = None
             # Also clear the separate lattice points storage
@@ -685,21 +697,31 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_storage.set(None)
             # Also clear the separate ellipse params storage
             ellipse_params_storage.set(None)
-            
-            # Clear ellipse overlay directly from FFT widget (no re-render)
-            fft_widget_instance = fft_widget.get()
-            if fft_widget_instance is not None:
-                with fft_widget_instance.batch_update():
-                    # Remove ellipse traces (keep heatmap and scatter overlay)
-                    traces_to_keep = []
-                    for i, trace in enumerate(fft_widget_instance.data):
-                        if i < 2 or not (hasattr(trace, 'mode') and trace.mode == 'lines' and trace.line.color == 'red'):
-                            traces_to_keep.append(trace)
-                    fft_widget_instance.data = traces_to_keep
-                print("Ellipse overlay cleared from FFT widget (no re-render)")
         
-        # Clear drawn circles
+        # Clear drawn circles for all modes
         new_state['drawn_circles'] = []
+        
+        # Clear ALL overlay traces and shapes directly from FFT widget (no re-render)
+        fft_widget_instance = fft_widget.get()
+        if fft_widget_instance is not None:
+
+            
+            with fft_widget_instance.batch_update():
+                # Remove all ellipse_fit traces using index-based approach (more reliable)
+                ellipse_indices = []
+                for i, trace in enumerate(fft_widget_instance.data):
+                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                        ellipse_indices.append(i)
+                
+                # Remove ellipse traces from the end to avoid index shifting
+                for i in reversed(ellipse_indices):
+                    fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+                
+                # Clear all overlay shapes (keep only the base shapes if any)
+                # This will remove all lattice point shapes and drawn circles
+                fft_widget_instance.layout.shapes = []
+                fft_widget_instance.layout.annotations = []
+            # print("All overlay traces and shapes cleared from FFT widget (no re-render)")
         
         fft_state.set(new_state)
 
@@ -750,6 +772,26 @@ def server(input: Inputs, output: Outputs, session: Session):
         try:
             print("=== MANUAL FFT CALCULATION TRIGGERED ===")
             
+            # Clear all overlay storage from previous FFT analysis
+            # This ensures lattice points, ellipse fits, and tilt info from previous regions/images don't persist
+            lattice_points_storage.set([])
+            ellipse_params_storage.set(None)
+            tilt_info_storage.set(None)
+            
+            # Reset FFT state to clear drawn circles and measurements
+            fft_state.set({
+                'mode': 'Resolution Ring',
+                'resolution_radius': None,
+                'resolution_click_x': None,
+                'resolution_click_y': None,
+                'lattice_points': [],
+                'ellipse_params': None,
+                'tilt_info': None,
+                'zoom_factor': 1.0,
+                'drawn_circles': [],
+                'current_measurement': None
+            })
+            
             # Check box_coordinates from callback
             box_coords = box_coordinates.get()
             print(f"Box coordinates: {box_coords}")
@@ -798,7 +840,8 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _():
         """Handle Fit button click to fit ellipse to lattice points."""
         current_state = fft_state.get()
-        if current_state['mode'] != 'Lattice Point':
+        # Check the actual UI input instead of relying on fft_state mode sync
+        if input.label_mode() != 'Lattice Point':
             return
             
         # Get points from separate storage instead of fft_state
@@ -812,8 +855,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         if len(points) > 0:
             x_coords = [p[0] for p in points]
             y_coords = [p[1] for p in points]
-            print(f"Point statistics: x range [{min(x_coords):.1f}, {max(x_coords):.1f}], y range [{min(y_coords):.1f}, {max(y_coords):.1f}]")
-            print(f"Point distances from center: {[(abs(x-size/2), abs(y-size/2)) for x, y in points]}")
+            #print(f"Point statistics: x range [{min(x_coords):.1f}, {max(x_coords):.1f}], y range [{min(y_coords):.1f}, {max(y_coords):.1f}]")
+            #print(f"Point distances from center: {[(abs(x-size/2), abs(y-size/2)) for x, y in points]}")
             
         # Compute image center - use actual FFT image size, not hardcoded size
         # Get the actual FFT image size from the cached image
@@ -909,12 +952,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                 
                 # Add ellipse as a scatter trace directly to the widget
                 with fft_widget_instance.batch_update():
-                    # First remove any existing ellipse traces (keep heatmap and scatter overlay)
-                    traces_to_keep = []
+                    # First remove any existing ellipse_fit traces using index-based removal
+                    ellipse_indices = []
                     for i, trace in enumerate(fft_widget_instance.data):
-                        if i < 2 or not (hasattr(trace, 'mode') and trace.mode == 'lines' and trace.line.color == 'red'):
-                            traces_to_keep.append(trace)
-                    fft_widget_instance.data = traces_to_keep
+                        if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                            ellipse_indices.append(i)
+                    
+                    # Remove ellipse traces from the end to avoid index shifting
+                    for i in reversed(ellipse_indices):
+                        fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
                     
                     # Add new ellipse trace
                     fft_widget_instance.add_trace(go.Scatter(
@@ -927,7 +973,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         name='ellipse_fit'
                     ))
                 
-                print(f"Ellipse overlay added directly to FFT widget (no re-render)")
+                #print(f"Ellipse overlay added directly to FFT widget (no re-render)")
             else:
                 print("Warning: FFT widget not available for ellipse overlay")
         except Exception as e:
@@ -938,14 +984,16 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _():
         """Handle Estimate Tilt button click to compute tilt angle from ellipse."""
         current_state = fft_state.get()
-        if current_state['mode'] != 'Lattice Point':
+        # Check the actual UI input instead of relying on fft_state mode sync
+        if input.label_mode() != 'Lattice Point':
             return
             
-        # Ensure an ellipse is fitted
-        if current_state['ellipse_params'] is None:
+        # Ensure an ellipse is fitted - check the actual storage first
+        ellipse_params = ellipse_params_storage.get()
+        if ellipse_params is None:
             # Get points from separate storage instead of fft_state
             points = list(lattice_points_storage.get())
-            print(f"Current lattice points for tilt estimation: {points}")
+            #print(f"Current lattice points for tilt estimation: {points}")
             if len(points) == 0:
                 print("No lattice points available for tilt estimation.")
                 return
@@ -966,7 +1014,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             working_points = points.copy()
             
             # If fewer than 6 points, create additional points by mirroring and jittering
-            if len(points) < 6:
+            if len(points) < 3:
                 print(f"Only {len(points)} points available. Creating additional points for better ellipse fitting...")
                 
                 # Mirror each point through the center and add jittered versions
@@ -1014,10 +1062,10 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Calculate tilt angle in degrees
         tilt_angle_degrees = math.degrees(tilt_angle)
         
-        print(f"=== TILT ESTIMATION RESULTS ===")
-        print(f"Minor axis: {small_axis:.2f}")
-        print(f"Major axis: {large_axis:.2f}")
-        print(f"Tilt angle: {tilt_angle_degrees:.2f}° (arccos(minor/major))")
+        # print(f"=== TILT ESTIMATION RESULTS ===")
+        # print(f"Minor axis: {small_axis:.2f}")
+        # print(f"Major axis: {large_axis:.2f}")
+        # print(f"Tilt angle: {tilt_angle_degrees:.2f}° (arccos(minor/major))")
         
         # Calculate apix using the minor axis (untilted apix)
         resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
@@ -1032,14 +1080,14 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             untilted_apix = (small_axis * resolution) / fft_image_size
             
-            print(f"Resolution: {resolution} Å")
-            print(f"Estimated untilted apix: {untilted_apix:.3f} Å/px (using minor axis)")
+            # print(f"Resolution: {resolution} Å")
+            # print(f"Estimated untilted apix: {untilted_apix:.3f} Å/px (using minor axis)")
             
             if 0.01 <= untilted_apix <= 6.0:
                 # Update UI controls with the untilted apix
                 ui.update_slider("apix_slider", value=untilted_apix, session=session)
                 ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
-                print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
+                # print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
             else:
                 print(f"Warning: Calculated apix {untilted_apix:.3f} is outside valid range [0.01, 6.0]")
         else:
@@ -1049,7 +1097,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         tilt_info = (small_axis, large_axis, tilt_angle, untilted_apix if 'untilted_apix' in locals() else None)
         tilt_info_storage.set(tilt_info)
         
-        print(f"Tilt information stored in separate storage (no FFT re-render)")
+        # print(f"Tilt information stored in separate storage (no FFT re-render)")
 
     # Remove click handler for 1D plot since we're using hover instead of static markers
     
@@ -1070,19 +1118,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         img.save(tmp.name)
         tmp.close()
         return tmp.name
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @reactive.Calc
@@ -1158,7 +1193,24 @@ def server(input: Inputs, output: Outputs, session: Session):
             binned_image_data.set(None)
             image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
             cached_fft_image.set(None)
-            cached_fft_image_no_circles.set(None)
+
+            
+            # Clear all overlay storage when upload fails
+            lattice_points_storage.set([])
+            ellipse_params_storage.set(None)
+            tilt_info_storage.set(None)
+            fft_state.set({
+                'mode': 'Resolution Ring',
+                'resolution_radius': None,
+                'resolution_click_x': None,
+                'resolution_click_y': None,
+                'lattice_points': [],
+                'ellipse_params': None,
+                'tilt_info': None,
+                'zoom_factor': 1.0,
+                'drawn_circles': [],
+                'current_measurement': None
+            })
             return
             
         # Load image using the original get_image function (no binning for FFT analysis)
@@ -1174,7 +1226,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Get the original filename from the upload info instead of the temporary path
             original_filename = file_info[0]["name"]
-            print(f"Original filename: {original_filename}")
+            #print(f"Original filename: {original_filename}")
             
             # Extract nominal apix from filename and update the textbox
             nominal_value = extract_nominal(original_filename)
@@ -1207,6 +1259,24 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': None
             })
             
+            # Clear all overlay storage from previous image analysis
+            # This ensures lattice points, ellipse fits, and tilt info don't persist to new images
+            lattice_points_storage.set([])
+            ellipse_params_storage.set(None)
+            tilt_info_storage.set(None)
+            fft_state.set({
+                'mode': 'Resolution Ring',
+                'resolution_radius': None,
+                'resolution_click_x': None,
+                'resolution_click_y': None,
+                'lattice_points': [],
+                'ellipse_params': None,
+                'tilt_info': None,
+                'zoom_factor': 1.0,
+                'drawn_circles': [],
+                'current_measurement': None
+            })
+            
             # Note: region_table_data is NOT cleared to allow comparison across multiple images
             
             # Also keep the old format for compatibility with FFT calculations
@@ -1230,7 +1300,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(fft_trigger)
     def _():
         """Update cached FFT images when FFT is manually triggered (Calc FFT button)."""
-        print("FFT calculation triggered - checking drawn region")
+        #print("FFT calculation triggered - checking drawn region")
         
         region = get_current_region()
         if region is not None:
@@ -1527,8 +1597,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Add transparent scatter overlay to capture clicks and mouse events
         # Create a grid of invisible points that cover the entire FFT
         y_coords, x_coords = np.meshgrid(
-            np.arange(0, fft_arr.shape[0], 3),  # Every 3 pixels
-            np.arange(0, fft_arr.shape[1], 3),  # Every 3 pixels
+            np.arange(0, fft_arr.shape[0], 3),  # Every 3 pixels for performance
+            np.arange(0, fft_arr.shape[1], 3),  # Every 3 pixels for performance
             indexing='ij'
         )
         scatter_trace = go.Scatter(
@@ -1585,7 +1655,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             autosize=True,
             dragmode='pan',  # Keep pan mode for now, will be updated after circle is drawn
             modebar=dict(
-                add=['drawcircle', 'drawline', 'eraseshape', 'zoom', 'pan', 'reset+autorange'],
+                #add=['drawcircle', 'drawline', 'eraseshape', 'zoom', 'pan', 'reset+autorange'],
+                add=[ 'zoom', 'pan', 'reset+autorange'],
+
                 remove=['select2d', 'lasso2d'],
                 bgcolor='rgba(255,255,255,0.8)',
                 color='black',
@@ -1645,7 +1717,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         print(f"Circle: center=({cx}, {cy}), radius={r:.2f}")
                         print(f"Major axis: {r:.2f}, Minor axis: {r:.2f} (circle)")
                         print(f"Resolution: {resolution} Å, Calculated Apix: {calculated_apix:.3f} Å/px")
-                        print(f"Debug: r={r}, resolution={resolution}, fft_image_size={fft_image_size}")
+                        #print(f"Debug: r={r}, resolution={resolution}, fft_image_size={fft_image_size}")
                         
                         # Update the apix slider with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
@@ -1671,30 +1743,53 @@ def server(input: Inputs, output: Outputs, session: Session):
                     print(f"=== LATTICE POINT MODE ===")
                     print(f"Click coordinates: x={click_x}, y={click_y}")
                     
+                    # Note: The click_x, click_y are from the 3-pixel grid scatter points
+                    # But we want to allow clicking anywhere and snap to a reasonable position
+                    # For now, use the clicked coordinates as-is since they're already on the grid
+                    snapped_x, snapped_y = click_x, click_y
+                    
                     # Store the lattice point in separate storage (doesn't trigger FFT re-render)
                     current_points = lattice_points_storage.get()
-                    current_points.append((click_x, click_y))
-                    lattice_points_storage.set(current_points)
+                    new_points = current_points + [(snapped_x, snapped_y)]  # Create new list to trigger reactive update
+                    lattice_points_storage.set(new_points)
                     
-                    print(f"Added lattice point: ({click_x}, {click_y}). Total points: {len(current_points)}")
+                    print(f"Added lattice point: ({snapped_x}, {snapped_y}). Total points: {len(new_points)}")
+                    # print(f"[DEBUG] Current mode storage: {current_mode_storage.get()}")
                     
-                    # Define radius for the green circle (same size as in fft_with_circle display)
-                    r = 8  # Circle radius - match the size used in fft_with_circle
-                    new_circle = {
-                        'type': 'circle',
-                        'x0': click_x-r, 'y0': click_y-r, 'x1': click_x+r, 'y1': click_y+r, 
-                        'line': {'color': 'green', 'width': 2},
-                        'layer': 'above',
-                        'editable': False  # Make the shape editable
-                    }
-                    current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
-                    current_shapes.append(new_circle)
-                    with fw.batch_update():
-                        fw.layout.shapes = current_shapes
-                        fw.layout.dragmode = 'select'  # Enable shape selection/editing
+                    # Note: Green circle display is handled by the reactive effect for lattice_points_storage
+                    # No need to add shapes directly here - it will be handled automatically
         
-        # Attach the click callback to the scatter trace
+        # Attach the click callback to the scatter trace for backward compatibility
         scatter_trace.on_click(update_point)
+        
+        # Also attach a general click handler to the entire figure to capture clicks anywhere
+        def handle_figure_click(trace, points, selector):
+            """Handle clicks anywhere on the figure, not just on scatter points."""
+            if hasattr(points, 'xs') and hasattr(points, 'ys') and len(points.xs) > 0:
+                # Get the actual click coordinates from the event
+                click_x, click_y = points.xs[0], points.ys[0]
+                
+                # Get current mode dynamically
+                current_mode_now = current_mode_storage.get()
+                
+                # Only handle lattice point mode here (Resolution Ring is handled by scatter trace)
+                if current_mode_now == 'Lattice Point':
+                    # print(f"=== LATTICE POINT MODE (Figure Click) ===")
+                    # print(f"Raw click coordinates: x={click_x}, y={click_y}")
+                    
+                    # Snap to nearest grid point (multiples of 3)
+                    snapped_x = round(click_x / 3) * 3
+                    snapped_y = round(click_y / 3) * 3
+                    
+                    # Store the snapped lattice point
+                    current_points = lattice_points_storage.get()
+                    new_points = current_points + [(snapped_x, snapped_y)]
+                    lattice_points_storage.set(new_points)
+                    
+                    print(f"Added lattice point (snapped): ({snapped_x}, {snapped_y}). Total points: {len(new_points)}")
+        
+        # Attach general click handler to the figure widget
+        fw.data[0].on_click(handle_figure_click)  # Attach to heatmap trace
         
         # Store the widget for in-place overlay updates (ellipse, etc.)
         fft_widget.set(fw)
@@ -1710,7 +1805,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.contrast)
     def _():
         """Update FFT heatmap data in-place when contrast changes."""
-        print("Contrast changed - updating FFT heatmap data in-place")
+        #print("Contrast changed - updating FFT heatmap data in-place")
         
         widget = fft_widget.get()
         region = get_current_region()
@@ -1733,14 +1828,16 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage)
     def _():
         """Update FFT overlays when lattice points or mode changes."""
-        print("Updating FFT overlays for lattice points or mode change")
+        # print("Updating FFT overlays for lattice points or mode change")
         
         widget = fft_widget.get()
         if widget is None:
+            # print("[DEBUG] No FFT widget available for lattice point overlay")
             return
         
         lattice_points = lattice_points_storage.get()
         current_mode = current_mode_storage.get()
+        # print(f"[DEBUG] Lattice overlay effect - points: {len(lattice_points)}, mode: {current_mode}")
         
         # Get current shapes and filter out lattice point circles and ellipses
         current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
@@ -1753,27 +1850,27 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hasattr(s.line, 'color') and s.line.color == 'green' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
-            # Check if this is a fitted ellipse (path type with red color)
-            is_fitted_ellipse = (
+            # Check if this is a fitted ellipse shape (legacy - ellipses are now traces, not shapes)
+            is_fitted_ellipse_shape = (
                 hasattr(s, 'type') and s.type == 'path' and
                 hasattr(s, 'line') and s.line and
                 hasattr(s.line, 'color') and s.line.color == 'red'
             )
-            # When switching to Ring mode, remove both lattice circles and ellipses
-            # When in Lattice Point mode, keep existing ellipses
-            should_remove = False
+            # Always remove fitted ellipse shapes (legacy cleanup) and lattice circles based on mode
+            should_remove = is_fitted_ellipse_shape  # Always remove legacy ellipse shapes
             if current_mode == 'Resolution Ring':
-                # Remove both lattice circles and ellipses when switching to Ring mode
-                should_remove = is_lattice_circle or is_fitted_ellipse
+                # Also remove lattice circles when switching to Ring mode
+                should_remove = should_remove or is_lattice_circle
             else:  # Lattice Point mode
-                # Only remove lattice circles (ellipses will be re-added if they exist)
-                should_remove = is_lattice_circle
+                # Also remove lattice circles (they will be re-added if they exist)
+                should_remove = should_remove or is_lattice_circle
             
             if not should_remove:
                 preserved_shapes.append(s)
         
         # Add lattice points if in Lattice Point mode
         if current_mode == 'Lattice Point':
+            # print(f"[DEBUG] Adding {len(lattice_points)} green circles for lattice points")
             for pt in lattice_points:
                 x, y = pt[0], pt[1]
                 # Add green circle for each lattice point
@@ -1785,84 +1882,42 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'editable': False
                 }
                 preserved_shapes.append(lattice_circle)
+                # print(f"[DEBUG] Added green circle at ({x}, {y})")
+        # else:
+            # print(f"[DEBUG] Not adding lattice circles - mode is: {current_mode}")
         
-        # Add fitted ellipse if in Lattice Point mode and ellipse exists
-        if current_mode == 'Lattice Point':
-            ellipse_params = ellipse_params_storage.get()
-            if ellipse_params is not None:
-                a, b, theta = ellipse_params
-                
-                # Calculate center coordinates (same logic as in fit_markers)
-                if len(widget.data) > 0 and hasattr(widget.data[0], 'z'):
-                    fft_arr_shape = widget.data[0].z.shape
-                    N = fft_arr_shape[0]
-                    cx = cy = N/2
-                else:
-                    # Fallback to default size
-                    cx = cy = size/2
-                
-                # Parametric ellipse
-                t = np.linspace(0, 2*np.pi, 100)
-                x_ellipse = a * np.cos(t)
-                y_ellipse = b * np.sin(t)
-                x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
-                y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
-                x_final = cx + x_rot
-                y_final = cy + y_rot
-                
-                # Create SVG path for ellipse
-                path_coords = []
-                for i, (x, y) in enumerate(zip(x_final, y_final)):
-                    if i == 0:
-                        path_coords.append(f"M {x:.2f} {y:.2f}")
-                    else:
-                        path_coords.append(f"L {x:.2f} {y:.2f}")
-                path_coords.append("Z")
-                
-                ellipse_shape = {
-                    'type': 'path',
-                    'path': ' '.join(path_coords),
-                    'line': {'color': 'red', 'width': 2},
-                    'layer': 'above'
-                }
-                preserved_shapes.append(ellipse_shape)
+        # Note: Fitted ellipse is now handled as a TRACE by fit_markers function, not as a shape
+        # This prevents duplicate ellipses (one trace + one shape)
         
         # Update shapes in-place
         with widget.batch_update():
             widget.layout.shapes = preserved_shapes
             
-            # Also handle ellipse traces - remove ellipse_fit trace when switching to Ring mode
+            # Only handle ellipse traces for mode switching - remove ellipse_fit trace when switching to Ring mode
             if current_mode == 'Resolution Ring':
                 # Remove any ellipse_fit traces
-                new_data = []
-                for trace in widget.data:
+
+                
+                # Use index-based removal (more reliable than reassigning data)
+                ellipse_indices = []
+                for i, trace in enumerate(widget.data):
                     if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
-                        continue  # Skip ellipse_fit traces
-                    new_data.append(trace)
-                widget.data = new_data
-            elif current_mode == 'Lattice Point' and ellipse_params is not None:
-                # Check if ellipse_fit trace already exists
-                has_ellipse_trace = any(hasattr(trace, 'name') and trace.name == 'ellipse_fit' for trace in widget.data)
-                if not has_ellipse_trace:
-                    # Add ellipse trace
-                    widget.add_trace(go.Scatter(
-                        x=x_final, 
-                        y=y_final, 
-                        mode='lines', 
-                        line=dict(color='red', width=2), 
-                        showlegend=False, 
-                        hoverinfo='skip',
-                        name='ellipse_fit'
-                    ))
+                        ellipse_indices.append(i)
+                
+                # Remove ellipse traces from the end to avoid index shifting
+                for i in reversed(ellipse_indices):
+                    widget.data = widget.data[:i] + widget.data[i+1:]
+            # Note: Do NOT add ellipse traces here - only fit_markers should add them
+            # This prevents duplicate ellipses when lattice points are added after fitting
         
-        print(f"Updated FFT overlays - lattice points: {len(lattice_points)}, mode: {current_mode}")
+        # print(f"Updated FFT overlays - lattice points: {len(lattice_points)}, mode: {current_mode}")
 
     # Effect to update FFT overlays when fft_state changes (circles, measurements)
     @reactive.Effect
     @reactive.event(fft_state, current_mode_storage)
     def _():
         """Update FFT overlays when drawn circles or measurements change."""
-        print("Updating FFT overlays for drawn circles or measurements")
+        # print("Updating FFT overlays for drawn circles or measurements")
         
         widget = fft_widget.get()
         if widget is None:
@@ -1933,12 +1988,17 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Handle ellipse traces based on current mode
             if current_mode == 'Resolution Ring':
                 # Remove any ellipse_fit traces when in Ring mode
-                new_data = []
-                for trace in widget.data:
+
+                
+                # Use index-based removal (more reliable than reassigning data)
+                ellipse_indices = []
+                for i, trace in enumerate(widget.data):
                     if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
-                        continue  # Skip ellipse_fit traces
-                    new_data.append(trace)
-                widget.data = new_data
+                        ellipse_indices.append(i)
+                
+                # Remove ellipse traces from the end to avoid index shifting
+                for i in reversed(ellipse_indices):
+                    widget.data = widget.data[:i] + widget.data[i+1:]
             
             # Update annotations for measurements
             widget.layout.annotations = []
@@ -1957,23 +2017,24 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'borderwidth': 1
                 }]
         
-        print(f"Updated FFT overlays - circles: {len(drawn_circles)}, measurement: {current_measurement is not None}")
+        # print(f"Updated FFT overlays - circles: {len(drawn_circles)}, measurement: {current_measurement is not None}")
 
     # Effect to autoscale FFT plot when triggered by Calc FFT (not contrast changes)
     @reactive.Effect
     @reactive.event(autoscale_trigger)
     def _():
         """Autoscale FFT plot when triggered by Calc FFT button."""
-        print("Autoscaling FFT plot")
+        #print("Autoscaling FFT plot")
         
         widget = fft_widget.get()
         if widget is not None:
             with widget.batch_update():
                 widget.layout.xaxis.autorange = True
                 widget.layout.yaxis.autorange = True
-            print("✅ FFT plot auto-scaled")
+            #print("✅ FFT plot auto-scaled")
         else:
-            print("No FFT widget available for autoscaling")
+            pass
+            #print("No FFT widget available for autoscaling")
 
     # Restore the Shiny relayout event handler for fft_with_circle
     @reactive.Effect
@@ -1983,17 +2044,17 @@ def server(input: Inputs, output: Outputs, session: Session):
         print(f"=== SHINY RELAYOUT EVENT RECEIVED ===")
         print(f"Raw event: {evt}")
         if not evt:
-            print("No relayout event data (evt is None or empty)")
+            #print("No relayout event data (evt is None or empty)")
             return
         if 'shapes' not in evt:
-            print("No 'shapes' key in relayout event")
+            #print("No 'shapes' key in relayout event")
             return
         shapes = evt['shapes']
         print(f"Shapes: {shapes}")
         if shapes and len(shapes) > 0:
             latest_shape = shapes[-1]
             shape_type = latest_shape.get('type')
-            print(f"Latest shape type: {shape_type}")
+            #print(f"Latest shape type: {shape_type}")
             if shape_type == 'line':
                 x0 = latest_shape.get('x0')
                 y0 = latest_shape.get('y0')
@@ -2095,29 +2156,29 @@ def server(input: Inputs, output: Outputs, session: Session):
 
 
 
-    @output
-    @render.text
-    def lattice_points_data():
-        """Hidden output to expose lattice points data for persistence."""
-        state = fft_state.get()
-        if state['mode'] == 'Lattice Point':
-            # Get points from separate storage
-            points = lattice_points_storage.get()
-            if points:
-                # Return lattice points as JSON-like string for easy parsing
-                points_str = ";".join([f"{x},{y}" for x, y in points])
-                return f"Lattice Points: {points_str}"
-        return "Lattice Points: None"
+    # @output
+    # @render.text
+    # def lattice_points_data():
+    #     """Hidden output to expose lattice points data for persistence."""
+    #     state = fft_state.get()
+    #     if state['mode'] == 'Lattice Point':
+    #         # Get points from separate storage
+    #         points = lattice_points_storage.get()
+    #         if points:
+    #             # Return lattice points as JSON-like string for easy parsing
+    #             points_str = ";".join([f"{x},{y}" for x, y in points])
+    #             return f"Lattice Points: {points_str}"
+    #     return "Lattice Points: None"
 
-    @output
-    @render.text
-    def lattice_points_count():
-        """Hidden output to expose lattice points count for debugging."""
-        state = fft_state.get()
-        if state['mode'] == 'Lattice Point':
-            points = lattice_points_storage.get()
-            return f"Lattice Points Count: {len(points)}"
-        return "Lattice Points Count: 0"
+    # @output
+    # @render.text
+    # def lattice_points_count():
+    #     """Hidden output to expose lattice points count for debugging."""
+    #     state = fft_state.get()
+    #     if state['mode'] == 'Lattice Point':
+    #         points = lattice_points_storage.get()
+    #         return f"Lattice Points Count: {len(points)}"
+    #     return "Lattice Points Count: 0"
 
     @output
     @render.text
@@ -2133,7 +2194,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 
                 apix_str = ""
                 if untilted_apix is not None:
-                    apix_str = f", Untilted Apix: {untilted_apix:.3f} Å/px"
+                    apix_str = f", Estimated untilted apix: {untilted_apix:.3f} Å/px"
                 
                 return (f"Minor axis: {small_axis:.2f}, "
                        f"Major axis: {large_axis:.2f}, "
@@ -2215,7 +2276,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         """Live vertical scatter: Apix centered by nominal value, from region_table_data, using FigureWidget for in-place updates."""
         df = region_table_data.get().copy()
         if df is None or df.empty or 'Filename' not in df.columns or 'Apix' not in df.columns or 'Nominal' not in df.columns:
-            print("[DEBUG] DataFrame is empty or missing columns.")
+            #print("[DEBUG] DataFrame is empty or missing columns.")
             fw = FigureWidget()
             apix_centered_widget.set(fw)
             return fw
@@ -2235,11 +2296,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             textbox_nominal = float(input.nominal_apix())
             df.loc[missing_nominal, 'Nominal'] = textbox_nominal
         
-        print("[DEBUG] DataFrame after ensuring numeric types:\n", df[['Filename', 'Apix', 'Nominal']])
+        #print("[DEBUG] DataFrame after ensuring numeric types:\n", df[['Filename', 'Apix', 'Nominal']])
         # Drop rows with missing data
         df = df.dropna(subset=['Apix', 'Nominal'])
         if df.empty:
-            print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal.")
+            #print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal.")
             fw = FigureWidget()
             apix_centered_widget.set(fw)
             return fw
@@ -2250,7 +2311,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             nominal_order = list(df['Nominal'].dropna().unique())
         # Apix - Nominal
         df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Apix'] - row['Nominal'], axis=1)
-        print("[DEBUG] DataFrame before plotting:\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
+        #print("[DEBUG] DataFrame before plotting:\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
         fig = go.Figure()
         # Light blue vertical scatter for each group
         for nominal in nominal_order:
@@ -2289,7 +2350,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             showlegend=True
         ))
         fig.update_layout(
-            title='Vertical Scatter: Apix Centered by Nominal Value',
+            title='Apix Centered by Nominal Value',
             xaxis_title='Nominal Value (Å)',
             yaxis_title='Apix - Nominal (Å/px)',
             xaxis=dict(type='category', categoryorder='array', categoryarray=nominal_order),
@@ -2318,7 +2379,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             import re
             df = region_table_data.get().copy()
             if df is None or df.empty or 'Filename' not in df.columns or 'Apix' not in df.columns or 'Nominal' not in df.columns:
-                print("[DEBUG] DataFrame is empty or missing columns (effect update).")
+                #print("[DEBUG] DataFrame is empty or missing columns (effect update).")
                 with widget.batch_update():
                     # Clear all existing traces
                     while len(widget.data) > 0:
@@ -2342,10 +2403,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 textbox_nominal = float(input.nominal_apix())
                 df.loc[missing_nominal, 'Nominal'] = textbox_nominal
             
-            print("[DEBUG] DataFrame after ensuring numeric types (effect):\n", df[['Filename', 'Apix', 'Nominal']])
+            #print("[DEBUG] DataFrame after ensuring numeric types (effect):\n", df[['Filename', 'Apix', 'Nominal']])
             df = df.dropna(subset=['Apix', 'Nominal'])
             if df.empty:
-                print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal (effect).")
+                #print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal (effect).")
                 with widget.batch_update():
                     # Clear all existing traces
                     while len(widget.data) > 0:
@@ -2359,7 +2420,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             except Exception:
                 nominal_order = list(df['Nominal'].dropna().unique())
             df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Apix'] - row['Nominal'], axis=1)
-            print("[DEBUG] DataFrame before plotting (effect):\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
+            #print("[DEBUG] DataFrame before plotting (effect):\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
             traces = []
             for nominal in nominal_order:
                 group = df[df['Nominal'] == nominal]
