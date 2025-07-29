@@ -184,6 +184,7 @@ app_ui = ui.page_sidebar(
                 ui.div(
                     {"style": "display: flex; gap: 10px; justify-content: center;"},
                     ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary"),
+                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary"),
                     #ui.input_action_button("clear_measurement", "Clear Measurement", class_="btn-secondary"),
                     ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary"),
                     ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary"),
@@ -672,6 +673,62 @@ def server(input: Inputs, output: Outputs, session: Session):
     # No need for Shiny event handlers
 
     @reactive.Effect
+    @reactive.event(input.tune_markers)
+    def _():
+        """Move all lattice points to the local max value"""
+        current_state = fft_state.get()
+        new_state = current_state.copy()
+        
+        # Check the actual UI mode instead of stored mode to avoid sync issues
+        current_ui_mode = input.label_mode()
+        
+        if current_ui_mode == 'Resolution Ring':
+            # # Clear resolution ring markers
+            # new_state['resolution_radius'] = None
+            # new_state['resolution_click_x'] = None
+            # new_state['resolution_click_y'] = None
+            print("❌ ERROR: Tune Markers is not applicable in Resolution Ring mode.")
+            return
+        elif current_ui_mode == 'Lattice Point':
+            # Clear lattice points, ellipse, and tilt info
+            new_state['lattice_points'] = []
+            new_state['ellipse_params'] = None
+            new_state['tilt_info'] = None
+            # Also clear the separate lattice points storage
+            lattice_points_storage.set([])
+            # Also clear the separate tilt info storage
+            tilt_info_storage.set(None)
+            # Also clear the separate ellipse params storage
+            ellipse_params_storage.set(None)
+        
+        # Clear drawn circles for all modes
+        new_state['drawn_circles'] = []
+        
+        # Clear ALL overlay traces and shapes directly from FFT widget (no re-render)
+        fft_widget_instance = fft_widget.get()
+        if fft_widget_instance is not None:
+
+            
+            with fft_widget_instance.batch_update():
+                # Remove all ellipse_fit traces using index-based approach (more reliable)
+                ellipse_indices = []
+                for i, trace in enumerate(fft_widget_instance.data):
+                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                        ellipse_indices.append(i)
+                
+                # Remove ellipse traces from the end to avoid index shifting
+                for i in reversed(ellipse_indices):
+                    fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+                
+                # Clear all overlay shapes (keep only the base shapes if any)
+                # This will remove all lattice point shapes and drawn circles
+                fft_widget_instance.layout.shapes = []
+                fft_widget_instance.layout.annotations = []
+            # print("All overlay traces and shapes cleared from FFT widget (no re-render)")
+        
+        fft_state.set(new_state)
+
+    @reactive.Effect
     @reactive.event(input.clear_markers)
     def _():
         """Clear all markers based on current mode."""
@@ -846,7 +903,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         # Get points from separate storage instead of fft_state
         points = list(lattice_points_storage.get())
-        print(f"Current lattice points: {points}")
+        #print(f"Current lattice points: {points}")
         if len(points) == 0:
             print("No lattice points to fit ellipse to.")
             return
