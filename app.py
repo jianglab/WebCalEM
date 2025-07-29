@@ -555,8 +555,15 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Add separate reactive value for tilt information to avoid FFT re-renders
     tilt_info_storage = reactive.Value(None)
     
+    # Add separate reactive values for dual tilt information
+    tilt_info_green_storage = reactive.Value(None)
+    tilt_info_red_storage = reactive.Value(None)
+    
     # Add separate reactive value for ellipse parameters to avoid FFT re-renders
     ellipse_params_storage = reactive.Value(None)
+    
+    # Add separate reactive value for tuned markers (red circles from local maxima)
+    tuned_markers_storage = reactive.Value([])
     
     # Add separate reactive value for current mode to avoid FFT re-renders
     current_mode_storage = reactive.Value('Resolution Ring')
@@ -627,6 +634,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _():
         """Initialize Fit button state."""
         is_disabled = input.label_mode() != "Lattice Point"
+        ui.update_action_button("tune_markers", disabled=is_disabled, session=session)
         ui.update_action_button("fit_markers", disabled=is_disabled, session=session)
         ui.update_action_button("estimate_tilt", disabled=is_disabled, session=session)
     
@@ -672,61 +680,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Note: Click events are now handled by Plotly's on_click callback
     # No need for Shiny event handlers
 
-    @reactive.Effect
-    @reactive.event(input.tune_markers)
-    def _():
-        """Move all lattice points to the local max value"""
-        current_state = fft_state.get()
-        new_state = current_state.copy()
-        
-        # Check the actual UI mode instead of stored mode to avoid sync issues
-        current_ui_mode = input.label_mode()
-        
-        if current_ui_mode == 'Resolution Ring':
-            # # Clear resolution ring markers
-            # new_state['resolution_radius'] = None
-            # new_state['resolution_click_x'] = None
-            # new_state['resolution_click_y'] = None
-            print("❌ ERROR: Tune Markers is not applicable in Resolution Ring mode.")
-            return
-        elif current_ui_mode == 'Lattice Point':
-            # Clear lattice points, ellipse, and tilt info
-            new_state['lattice_points'] = []
-            new_state['ellipse_params'] = None
-            new_state['tilt_info'] = None
-            # Also clear the separate lattice points storage
-            lattice_points_storage.set([])
-            # Also clear the separate tilt info storage
-            tilt_info_storage.set(None)
-            # Also clear the separate ellipse params storage
-            ellipse_params_storage.set(None)
-        
-        # Clear drawn circles for all modes
-        new_state['drawn_circles'] = []
-        
-        # Clear ALL overlay traces and shapes directly from FFT widget (no re-render)
-        fft_widget_instance = fft_widget.get()
-        if fft_widget_instance is not None:
-
-            
-            with fft_widget_instance.batch_update():
-                # Remove all ellipse_fit traces using index-based approach (more reliable)
-                ellipse_indices = []
-                for i, trace in enumerate(fft_widget_instance.data):
-                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
-                        ellipse_indices.append(i)
-                
-                # Remove ellipse traces from the end to avoid index shifting
-                for i in reversed(ellipse_indices):
-                    fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
-                
-                # Clear all overlay shapes (keep only the base shapes if any)
-                # This will remove all lattice point shapes and drawn circles
-                fft_widget_instance.layout.shapes = []
-                fft_widget_instance.layout.annotations = []
-            # print("All overlay traces and shapes cleared from FFT widget (no re-render)")
-        
-        fft_state.set(new_state)
 
     @reactive.Effect
     @reactive.event(input.clear_markers)
@@ -752,8 +705,15 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             # Also clear the separate tilt info storage
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            # Also clear the dual tilt info storages
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
             # Also clear the separate ellipse params storage
             ellipse_params_storage.set(None)
+            # Also clear the tuned markers storage
+            tuned_markers_storage.set([])
         
         # Clear drawn circles for all modes
         new_state['drawn_circles'] = []
@@ -767,7 +727,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Remove all ellipse_fit traces using index-based approach (more reliable)
                 ellipse_indices = []
                 for i, trace in enumerate(fft_widget_instance.data):
-                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -834,6 +794,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            tuned_markers_storage.set([])
             
             # Reset FFT state to clear drawn circles and measurements
             fft_state.set({
@@ -901,19 +864,15 @@ def server(input: Inputs, output: Outputs, session: Session):
         if input.label_mode() != 'Lattice Point':
             return
             
-        # Get points from separate storage instead of fft_state
-        points = list(lattice_points_storage.get())
-        #print(f"Current lattice points: {points}")
-        if len(points) == 0:
-            print("No lattice points to fit ellipse to.")
+        # Get both sets of points
+        tuned_points = list(tuned_markers_storage.get())
+        user_points = list(lattice_points_storage.get())
+        
+        if len(tuned_points) == 0 and len(user_points) == 0:
+            print("No lattice points or tuned markers to fit ellipse to.")
             return
             
-        # Debug: Print point statistics
-        if len(points) > 0:
-            x_coords = [p[0] for p in points]
-            y_coords = [p[1] for p in points]
-            #print(f"Point statistics: x range [{min(x_coords):.1f}, {max(x_coords):.1f}], y range [{min(y_coords):.1f}, {max(y_coords):.1f}]")
-            #print(f"Point distances from center: {[(abs(x-size/2), abs(y-size/2)) for x, y in points]}")
+        print(f"Fitting ellipses: {len(user_points)} user points, {len(tuned_points)} tuned points")
             
         # Compute image center - use actual FFT image size, not hardcoded size
         # Get the actual FFT image size from the cached image
@@ -927,151 +886,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             cx, cy = size / 2, size / 2
             print(f"Using fallback size: {size}, center: ({cx}, {cy})")
         
-        # Create working points for ellipse fitting
-        working_points = points.copy()
-        
-        # If fewer than 6 points, create additional points by mirroring and jittering
-        if len(points) < 6:
-            print(f"Only {len(points)} points available. Creating additional points for better ellipse fitting...")
-            
-            # Mirror each point through the center and add jittered versions
-            for x, y in points:
-                # Mirror through center
-                mx, my = 2 * cx - x, 2 * cy - y
-                
-                # Add the mirrored point
-                working_points.append((mx, my))
-                
-                # Add jittered versions of both original and mirrored points
-                for _ in range(2):  # Create 2 jittered versions of each
-                    # Jitter original point
-                    jittered_x = x + np.random.normal(scale=2.0)
-                    jittered_y = y + np.random.normal(scale=2.0)
-                    working_points.append((jittered_x, jittered_y))
-                    
-                    # Jitter mirrored point
-                    jittered_mx = mx + np.random.normal(scale=2.0)
-                    jittered_my = my + np.random.normal(scale=2.0)
-                    working_points.append((jittered_mx, jittered_my))
-        
-        print(f"Fitting ellipse to {len(working_points)} points (including {len(points)} original points)")
-        
-        # Debug: Print working points statistics
-        if len(working_points) > 0:
-            wx_coords = [p[0] for p in working_points]
-            wy_coords = [p[1] for p in working_points]
-            print(f"Working points statistics: x range [{min(wx_coords):.1f}, {max(wx_coords):.1f}], y range [{min(wy_coords):.1f}, {max(wy_coords):.1f}]")
-        
-        # Fit ellipse
-        try:
-            a, b, theta = fit_ellipse_fixed_center(working_points, center=(cx, cy))
-            
-            # Validate ellipse parameters
-            max_reasonable_radius = fft_image_size if 'fft_image_size' in locals() else size
-            if a > max_reasonable_radius or b > max_reasonable_radius:
-                print(f"Warning: Ellipse axes too large (a={a:.1f}, b={b:.1f}), max reasonable={max_reasonable_radius}")
-                print("This might indicate an issue with the coordinate system or point data")
-                # Don't store unreasonable parameters
-                return
-            
-            # Store ellipse parameters in separate storage for tilt calculations
-            ellipse_params_storage.set((a, b, theta))
-            print(f"Ellipse fitted successfully: a={a:.1f}, b={b:.1f}, theta={theta:.3f}")
-            print(f"Ellipse center: ({cx}, {cy}), FFT image size: {fft_image_size if 'fft_image_size' in locals() else size}")
-            
-            # Add ellipse overlay directly to existing FFT widget (no re-render)
-            fft_widget_instance = fft_widget.get()
-            if fft_widget_instance is not None:
-                # Get the FFT image dimensions
-                fft_arr_shape = fft_widget_instance.data[0].z.shape if len(fft_widget_instance.data) > 0 else (size, size)
-                N = fft_arr_shape[0]
-                
-                # Check if ellipse parameters are reasonable (within image bounds)
-                max_radius = min(N/2, N/2)  # Maximum radius should be within image
-                if a > max_radius or b > max_radius:
-                    print(f"Warning: Ellipse axes too large (a={a:.1f}, b={b:.1f}), max allowed={max_radius}")
-                    # Scale down the ellipse to fit within image
-                    scale_factor = max_radius / max(a, b)
-                    a_scaled = a * scale_factor
-                    b_scaled = b * scale_factor
-                    print(f"Scaled ellipse: a={a_scaled:.1f}, b={b_scaled:.1f}")
-                else:
-                    a_scaled, b_scaled = a, b
-                
-                # Parametric ellipse
-                t = np.linspace(0, 2*np.pi, 100)
-                x_ellipse = a_scaled * np.cos(t)
-                y_ellipse = b_scaled * np.sin(t)
-                x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
-                y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
-                x_final = cx + x_rot
-                y_final = cy + y_rot
-                
-                # Add ellipse as a scatter trace directly to the widget
-                with fft_widget_instance.batch_update():
-                    # First remove any existing ellipse_fit traces using index-based removal
-                    ellipse_indices = []
-                    for i, trace in enumerate(fft_widget_instance.data):
-                        if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
-                            ellipse_indices.append(i)
-                    
-                    # Remove ellipse traces from the end to avoid index shifting
-                    for i in reversed(ellipse_indices):
-                        fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
-                    
-                    # Add new ellipse trace
-                    fft_widget_instance.add_trace(go.Scatter(
-                        x=x_final, 
-                        y=y_final, 
-                        mode='lines', 
-                        line=dict(color='red', width=2), 
-                        showlegend=False, 
-                        hoverinfo='skip',
-                        name='ellipse_fit'
-                    ))
-                
-                #print(f"Ellipse overlay added directly to FFT widget (no re-render)")
-            else:
-                print("Warning: FFT widget not available for ellipse overlay")
-        except Exception as e:
-            print(f"Ellipse fitting failed: {e}")
-
-    @reactive.Effect
-    @reactive.event(input.estimate_tilt)
-    def _():
-        """Handle Estimate Tilt button click to compute tilt angle from ellipse."""
-        current_state = fft_state.get()
-        # Check the actual UI input instead of relying on fft_state mode sync
-        if input.label_mode() != 'Lattice Point':
-            return
-            
-        # Ensure an ellipse is fitted - check the actual storage first
-        ellipse_params = ellipse_params_storage.get()
-        if ellipse_params is None:
-            # Get points from separate storage instead of fft_state
-            points = list(lattice_points_storage.get())
-            #print(f"Current lattice points for tilt estimation: {points}")
-            if len(points) == 0:
-                print("No lattice points available for tilt estimation.")
-                return
-                
-            # Compute image center - use actual FFT image size, not hardcoded size
-            # Get the actual FFT image size from the cached image
-            cached_fft = cached_fft_image.get()
-            if cached_fft is not None:
-                fft_image_size = cached_fft.size[0]  # Assuming square image
-                cx, cy = fft_image_size / 2, fft_image_size / 2
-                print(f"Using actual FFT image size for tilt estimation: {fft_image_size}, center: ({cx}, {cy})")
-            else:
-                # Fallback to hardcoded size
-                cx, cy = size / 2, size / 2
-                print(f"Using fallback size for tilt estimation: {size}, center: ({cx}, {cy})")
-            
-            # Create working points for ellipse fitting
+        # Function to create working points for ellipse fitting
+        def create_working_points(points):
             working_points = points.copy()
-            
             # If fewer than 6 points, create additional points by mirroring and jittering
-            if len(points) < 3:
+            if len(points) < 6:
                 print(f"Only {len(points)} points available. Creating additional points for better ellipse fitting...")
                 
                 # Mirror each point through the center and add jittered versions
@@ -1093,68 +912,277 @@ def server(input: Inputs, output: Outputs, session: Session):
                         jittered_mx = mx + np.random.normal(scale=2.0)
                         jittered_my = my + np.random.normal(scale=2.0)
                         working_points.append((jittered_mx, jittered_my))
+            return working_points
+        
+        # Function to fit ellipse and draw it
+        def fit_and_draw_ellipse(points, color, ellipse_name):
+            if len(points) == 0:
+                return None
+                
+            working_points = create_working_points(points)
+            print(f"Fitting {color} ellipse to {len(working_points)} points (including {len(points)} original points)")
             
-            print(f"Fitting ellipse to {len(working_points)} points for tilt estimation...")
+            try:
+                a, b, theta = fit_ellipse_fixed_center(working_points, center=(cx, cy))
+                
+                # Validate ellipse parameters
+                max_reasonable_radius = fft_image_size if 'fft_image_size' in locals() else size
+                if a > max_reasonable_radius or b > max_reasonable_radius:
+                    print(f"Warning: {color} ellipse axes too large (a={a:.1f}, b={b:.1f}), max reasonable={max_reasonable_radius}")
+                    return None
+                
+                print(f"{color.capitalize()} ellipse fitted: a={a:.1f}, b={b:.1f}, theta={theta:.3f}")
+                
+                # Create ellipse trace
+                t = np.linspace(0, 2*np.pi, 100)
+                x_ellipse = a * np.cos(t)
+                y_ellipse = b * np.sin(t)
+                x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
+                y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
+                x_final = cx + x_rot
+                y_final = cy + y_rot
+                
+                return {
+                    'params': (a, b, theta),
+                    'trace_data': (x_final, y_final),
+                    'color': color,
+                    'name': ellipse_name
+                }
+            except Exception as e:
+                print(f"{color.capitalize()} ellipse fitting failed: {e}")
+                return None
+        
+        # Fit ellipses for both point sets
+        green_ellipse = None
+        red_ellipse = None
+        
+        if len(user_points) > 0:
+            green_ellipse = fit_and_draw_ellipse(user_points, 'green', 'ellipse_fit_green')
+        
+        if len(tuned_points) > 0:
+            red_ellipse = fit_and_draw_ellipse(tuned_points, 'red', 'ellipse_fit_red')
+        
+        # Store ellipse parameters (prioritize tuned markers for tilt calculations)
+        if red_ellipse:
+            ellipse_params_storage.set(red_ellipse['params'])
+        elif green_ellipse:
+            ellipse_params_storage.set(green_ellipse['params'])
+        
+        # Add ellipse overlays directly to existing FFT widget (no re-render)
+        fft_widget_instance = fft_widget.get()
+        if fft_widget_instance is not None:
+            with fft_widget_instance.batch_update():
+                # Remove any existing ellipse_fit traces (both green and red)
+                ellipse_indices = []
+                for i, trace in enumerate(fft_widget_instance.data):
+                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
+                        ellipse_indices.append(i)
+                
+                # Remove ellipse traces from the end to avoid index shifting
+                for i in reversed(ellipse_indices):
+                    fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+                
+                # Add green ellipse trace if available
+                if green_ellipse:
+                    x_final, y_final = green_ellipse['trace_data']
+                    fft_widget_instance.add_trace(go.Scatter(
+                        x=x_final, 
+                        y=y_final, 
+                        mode='lines', 
+                        line=dict(color='green', width=2), 
+                        showlegend=False, 
+                        hoverinfo='skip',
+                        name='ellipse_fit_green'
+                    ))
+                
+                # Add red ellipse trace if available
+                if red_ellipse:
+                    x_final, y_final = red_ellipse['trace_data']
+                    fft_widget_instance.add_trace(go.Scatter(
+                        x=x_final, 
+                        y=y_final, 
+                        mode='lines', 
+                        line=dict(color='red', width=2), 
+                        showlegend=False, 
+                        hoverinfo='skip',
+                        name='ellipse_fit_red'
+                    ))
+            
+            #print(f"Ellipse overlay added directly to FFT widget (no re-render)")
+        else:
+            print("Warning: FFT widget not available for ellipse overlay")
+
+    @reactive.Effect
+    @reactive.event(input.tune_markers)
+    def _():
+        """Handle Tune Markers button click to find local maxima around lattice points."""
+        # Check if we're in Lattice Point mode
+        if input.label_mode() != 'Lattice Point':
+            return
+            
+        # Get lattice points from storage
+        lattice_points = list(lattice_points_storage.get())
+        if len(lattice_points) == 0:
+            print("No lattice points available for tuning.")
+            return
+            
+        # Get the cached FFT image data
+        cached_fft = cached_fft_image.get()
+        if cached_fft is None:
+            print("No FFT image available for tuning markers.")
+            return
+            
+        # Convert PIL image to numpy array for processing
+        fft_array = np.array(cached_fft)
+        if len(fft_array.shape) == 3:  # RGB image
+            fft_array = np.mean(fft_array, axis=2)  # Convert to grayscale
+            
+        tuned_points = []
+        
+        # Process each lattice point
+        for x, y in lattice_points:
+            # Convert to integer coordinates
+            ix, iy = int(round(x)), int(round(y))
+            
+            # Define 5x5 neighborhood bounds
+            x_min = max(0, ix - 2)
+            x_max = min(fft_array.shape[1], ix + 3)
+            y_min = max(0, iy - 2)
+            y_max = min(fft_array.shape[0], iy + 3)
+            
+            # Extract 5x5 neighborhood
+            neighborhood = fft_array[y_min:y_max, x_min:x_max]
+            
+            if neighborhood.size == 0:
+                # If neighborhood is empty, keep original point
+                tuned_points.append((x, y))
+                continue
+                
+            # Find local maximum in neighborhood
+            max_idx = np.unravel_index(np.argmax(neighborhood), neighborhood.shape)
+            
+            # Convert back to image coordinates
+            tuned_x = x_min + max_idx[1]
+            tuned_y = y_min + max_idx[0]
+            
+            tuned_points.append((tuned_x, tuned_y))
+            print(f"Tuned point: ({x:.1f}, {y:.1f}) -> ({tuned_x}, {tuned_y})")
+            
+        # Store tuned markers separately
+        tuned_markers_storage.set(tuned_points)
+        print(f"Tuned {len(tuned_points)} markers to local maxima.")
+
+    @reactive.Effect
+    @reactive.event(input.estimate_tilt)
+    def _():
+        """Handle Estimate Tilt button click to compute tilt angle from ellipse(s)."""
+        # Check the actual UI input instead of relying on fft_state mode sync
+        if input.label_mode() != 'Lattice Point':
+            return
+        
+        # Get both sets of points
+        tuned_points = list(tuned_markers_storage.get())
+        user_points = list(lattice_points_storage.get())
+        
+        if len(tuned_points) == 0 and len(user_points) == 0:
+            print("No lattice points or tuned markers available for tilt estimation.")
+            return
+        
+        print(f"Estimating tilt: {len(user_points)} user points, {len(tuned_points)} tuned points")
+        
+        # Get image center
+        cached_fft = cached_fft_image.get()
+        if cached_fft is not None:
+            fft_image_size = cached_fft.size[0]  # Assuming square image
+            cx, cy = fft_image_size / 2, fft_image_size / 2
+        else:
+            cx, cy = size / 2, size / 2
+            fft_image_size = size
+        
+        # Function to calculate tilt from points
+        def calculate_tilt_from_points(points, point_type):
+            if len(points) == 0:
+                return None
+                
+            # Create working points for ellipse fitting
+            working_points = points.copy()
+            
+            # If fewer than 6 points, create additional points by mirroring and jittering
+            if len(points) < 6:
+                print(f"Only {len(points)} {point_type} points available. Creating additional points for better ellipse fitting...")
+                
+                # Mirror each point through the center and add jittered versions
+                for x, y in points:
+                    # Mirror through center
+                    mx, my = 2 * cx - x, 2 * cy - y
+                    
+                    # Add the mirrored point
+                    working_points.append((mx, my))
+                    
+                    # Add jittered versions of both original and mirrored points
+                    for _ in range(2):  # Create 2 jittered versions of each
+                        # Jitter original point
+                        jittered_x = x + np.random.normal(scale=2.0)
+                        jittered_y = y + np.random.normal(scale=2.0)
+                        working_points.append((jittered_x, jittered_y))
+                        
+                        # Jitter mirrored point
+                        jittered_mx = mx + np.random.normal(scale=2.0)
+                        jittered_my = my + np.random.normal(scale=2.0)
+                        working_points.append((jittered_mx, jittered_my))
+            
+            print(f"Fitting {point_type} ellipse to {len(working_points)} points for tilt estimation...")
             
             # Fit ellipse
             try:
                 a, b, theta = fit_ellipse_fixed_center(working_points, center=(cx, cy))
                 
-                # Store ellipse parameters only in separate storage for tilt calculations
-                ellipse_params_storage.set((a, b, theta))
-                print(f"Ellipse fitted successfully for tilt estimation: a={a:.1f}, b={b:.1f}, theta={theta:.3f}")
+                small_axis, large_axis = sorted([a, b])
+                tilt_angle = calculate_tilt_angle(small_axis, large_axis)
+                
+                # Calculate apix using the minor axis (untilted apix)
+                resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+                untilted_apix = None
+                if resolution is not None and small_axis > 0:
+                    untilted_apix = (small_axis * resolution) / fft_image_size
+                    if not (0.01 <= untilted_apix <= 6.0):
+                        print(f"Warning: {point_type} calculated apix {untilted_apix:.3f} is outside valid range [0.01, 6.0]")
+                        untilted_apix = None
+                
+                apix_display = f"{untilted_apix:.3f}" if untilted_apix else "N/A"
+                print(f"{point_type.capitalize()} ellipse tilt: {math.degrees(tilt_angle):.2f}°, untilted apix: {apix_display}")
+                
+                return (small_axis, large_axis, tilt_angle, untilted_apix)
             except Exception as e:
-                print(f"Ellipse fitting failed: {e}")
-                return
+                print(f"{point_type.capitalize()} ellipse fitting failed: {e}")
+                return None
         
-        # Compute tilt from ellipse parameters
-        ellipse_params = ellipse_params_storage.get()
-        if ellipse_params is None:
-            print("Error: No ellipse parameters available for tilt calculation")
-            return
-        a, b, _ = ellipse_params
-        small_axis, large_axis = sorted([a, b])
-        tilt_angle = calculate_tilt_angle(small_axis, large_axis)
+        # Calculate tilt for both point sets
+        green_tilt = None
+        red_tilt = None
         
-        # Calculate tilt angle in degrees
-        tilt_angle_degrees = math.degrees(tilt_angle)
-        
-        # print(f"=== TILT ESTIMATION RESULTS ===")
-        # print(f"Minor axis: {small_axis:.2f}")
-        # print(f"Major axis: {large_axis:.2f}")
-        # print(f"Tilt angle: {tilt_angle_degrees:.2f}° (arccos(minor/major))")
-        
-        # Calculate apix using the minor axis (untilted apix)
-        resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
-        if resolution is not None and small_axis > 0:
-            # Use minor axis for untilted apix calculation
-            # Get the actual FFT image size from the cached image
-            cached_fft = cached_fft_image.get()
-            if cached_fft is not None:
-                fft_image_size = cached_fft.size[0]  # Assuming square image
-            else:
-                fft_image_size = size  # Fallback to hardcoded size
+        if len(user_points) > 0:
+            green_tilt = calculate_tilt_from_points(user_points, "green")
             
-            untilted_apix = (small_axis * resolution) / fft_image_size
-            
-            # print(f"Resolution: {resolution} Å")
-            # print(f"Estimated untilted apix: {untilted_apix:.3f} Å/px (using minor axis)")
-            
-            if 0.01 <= untilted_apix <= 6.0:
-                # Update UI controls with the untilted apix
-                ui.update_slider("apix_slider", value=untilted_apix, session=session)
-                ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
-                # print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
-            else:
-                print(f"Warning: Calculated apix {untilted_apix:.3f} is outside valid range [0.01, 6.0]")
-        else:
-            print("Warning: Could not calculate apix - resolution or minor axis is invalid")
+        if len(tuned_points) > 0:
+            red_tilt = calculate_tilt_from_points(tuned_points, "red")
         
-        # Store tilt info in separate storage (doesn't trigger FFT re-render)
-        tilt_info = (small_axis, large_axis, tilt_angle, untilted_apix if 'untilted_apix' in locals() else None)
-        tilt_info_storage.set(tilt_info)
+        # Store tilt info in separate storages
+        tilt_info_green_storage.set(green_tilt)
+        tilt_info_red_storage.set(red_tilt)
         
-        # print(f"Tilt information stored in separate storage (no FFT re-render)")
+        # Store primary tilt info (prioritize tuned markers)
+        primary_tilt = red_tilt if red_tilt else green_tilt
+        tilt_info_storage.set(primary_tilt)
+        
+        # Update UI with the primary (best) untilted apix
+        if primary_tilt and primary_tilt[3] is not None:
+            untilted_apix = primary_tilt[3]
+            ui.update_slider("apix_slider", value=untilted_apix, session=session)
+            ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
+            print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
+        
+        print(f"Tilt information stored in separate storages")
 
     # Remove click handler for 1D plot since we're using hover instead of static markers
     
@@ -1256,6 +1284,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            tuned_markers_storage.set([])
             fft_state.set({
                 'mode': 'Resolution Ring',
                 'resolution_radius': None,
@@ -1321,6 +1352,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            tuned_markers_storage.set([])
             fft_state.set({
                 'mode': 'Resolution Ring',
                 'resolution_radius': None,
@@ -1882,9 +1916,9 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     # Effect to update overlays when lattice points, mode, or ellipse parameters change
     @reactive.Effect
-    @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage)
+    @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage, tuned_markers_storage)
     def _():
-        """Update FFT overlays when lattice points or mode changes."""
+        """Update FFT overlays when lattice points, tuned markers, or mode changes."""
         # print("Updating FFT overlays for lattice points or mode change")
         
         widget = fft_widget.get()
@@ -1893,8 +1927,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             return
         
         lattice_points = lattice_points_storage.get()
+        tuned_markers = tuned_markers_storage.get()
         current_mode = current_mode_storage.get()
-        # print(f"[DEBUG] Lattice overlay effect - points: {len(lattice_points)}, mode: {current_mode}")
+        # print(f"[DEBUG] Lattice overlay effect - points: {len(lattice_points)}, tuned: {len(tuned_markers)}, mode: {current_mode}")
         
         # Get current shapes and filter out lattice point circles and ellipses
         current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
@@ -1907,20 +1942,28 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hasattr(s.line, 'color') and s.line.color == 'green' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
+            # Check if this is a tuned marker circle (red, width 2, hollow)
+            is_tuned_circle = (
+                hasattr(s, 'type') and s.type == 'circle' and
+                hasattr(s, 'line') and s.line and
+                hasattr(s.line, 'color') and s.line.color == 'red' and
+                hasattr(s.line, 'width') and s.line.width == 2 and
+                hasattr(s, 'fillcolor') and s.fillcolor == 'rgba(0,0,0,0)'
+            )
             # Check if this is a fitted ellipse shape (legacy - ellipses are now traces, not shapes)
             is_fitted_ellipse_shape = (
                 hasattr(s, 'type') and s.type == 'path' and
                 hasattr(s, 'line') and s.line and
                 hasattr(s.line, 'color') and s.line.color == 'red'
             )
-            # Always remove fitted ellipse shapes (legacy cleanup) and lattice circles based on mode
+            # Always remove fitted ellipse shapes (legacy cleanup) and lattice/tuned circles based on mode
             should_remove = is_fitted_ellipse_shape  # Always remove legacy ellipse shapes
             if current_mode == 'Resolution Ring':
-                # Also remove lattice circles when switching to Ring mode
-                should_remove = should_remove or is_lattice_circle
+                # Also remove lattice and tuned circles when switching to Ring mode
+                should_remove = should_remove or is_lattice_circle or is_tuned_circle
             else:  # Lattice Point mode
-                # Also remove lattice circles (they will be re-added if they exist)
-                should_remove = should_remove or is_lattice_circle
+                # Also remove lattice and tuned circles (they will be re-added if they exist)
+                should_remove = should_remove or is_lattice_circle or is_tuned_circle
             
             if not should_remove:
                 preserved_shapes.append(s)
@@ -1940,6 +1983,22 @@ def server(input: Inputs, output: Outputs, session: Session):
                 }
                 preserved_shapes.append(lattice_circle)
                 # print(f"[DEBUG] Added green circle at ({x}, {y})")
+                
+            # Add tuned markers as red hollow circles
+            # print(f"[DEBUG] Adding {len(tuned_markers)} red hollow circles for tuned markers")
+            for pt in tuned_markers:
+                x, y = pt[0], pt[1]
+                # Add red hollow circle for each tuned marker
+                tuned_circle = {
+                    'type': 'circle',
+                    'x0': x-8, 'y0': y-8, 'x1': x+8, 'y1': y+8,
+                    'line': {'color': 'red', 'width': 2},
+                    'fillcolor': 'rgba(0,0,0,0)',  # Transparent fill (hollow)
+                    'layer': 'above',
+                    'editable': False
+                }
+                preserved_shapes.append(tuned_circle)
+                # print(f"[DEBUG] Added red hollow circle at ({x}, {y})")
         # else:
             # print(f"[DEBUG] Not adding lattice circles - mode is: {current_mode}")
         
@@ -1958,7 +2017,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Use index-based removal (more reliable than reassigning data)
                 ellipse_indices = []
                 for i, trace in enumerate(widget.data):
-                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -2050,7 +2109,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Use index-based removal (more reliable than reassigning data)
                 ellipse_indices = []
                 for i, trace in enumerate(widget.data):
-                    if hasattr(trace, 'name') and trace.name == 'ellipse_fit':
+                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -2241,7 +2300,47 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.text
     def tilt_output():
         """Display tilt estimation results."""
-        # First check separate storage for tilt info
+        # Check dual tilt storages first
+        green_tilt = tilt_info_green_storage.get()
+        red_tilt = tilt_info_red_storage.get()
+        
+        results = []
+        
+        # Format green ellipse results
+        if green_tilt is not None:
+            small_axis, large_axis, tilt_angle, untilted_apix = green_tilt
+            tilt_angle_degrees = math.degrees(tilt_angle)
+            
+            apix_str = ""
+            if untilted_apix is not None:
+                apix_str = f", Apix: {untilted_apix:.3f} Å/px"
+            
+            green_result = (f"🟢 User-clicked: Minor axis: {small_axis:.2f}, "
+                           f"Major axis: {large_axis:.2f}, "
+                           f"Tilt angle: {tilt_angle_degrees:.2f}°"
+                           f"{apix_str}")
+            results.append(green_result)
+        
+        # Format red ellipse results
+        if red_tilt is not None:
+            small_axis, large_axis, tilt_angle, untilted_apix = red_tilt
+            tilt_angle_degrees = math.degrees(tilt_angle)
+            
+            apix_str = ""
+            if untilted_apix is not None:
+                apix_str = f", Apix: {untilted_apix:.3f} Å/px"
+            
+            red_result = (f"🔴 Fine-tuned: Minor axis: {small_axis:.2f}, "
+                         f"Major axis: {large_axis:.2f}, "
+                         f"Tilt angle: {tilt_angle_degrees:.2f}°"
+                         f"{apix_str}")
+            results.append(red_result)
+        
+        # If we have dual results, return them
+        if results:
+            return "\n".join(results)
+        
+        # Fallback to legacy single tilt info
         tilt_info = tilt_info_storage.get()
         if tilt_info is not None:
             # Check if we have the new format with untilted apix
@@ -2843,8 +2942,15 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             # Also clear the separate tilt info storage
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            # Also clear the dual tilt info storages
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
             # Also clear the separate ellipse params storage
             ellipse_params_storage.set(None)
+            # Also clear the tuned markers storage
+            tuned_markers_storage.set([])
             #new_state['drawn_circles'] = []
             # Update the separate mode storage
             current_mode_storage.set('Resolution Ring')
@@ -2860,8 +2966,15 @@ def server(input: Inputs, output: Outputs, session: Session):
             lattice_points_storage.set([])
             # Also clear the separate tilt info storage
             tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            # Also clear the dual tilt info storages
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
             # Also clear the separate ellipse params storage
             ellipse_params_storage.set(None)
+            # Also clear the tuned markers storage
+            tuned_markers_storage.set([])
             # Update the separate mode storage
             current_mode_storage.set('Lattice Point')
         
@@ -2875,6 +2988,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Update Fit button state
         is_disabled = input.label_mode() != "Lattice Point"
+        ui.update_action_button("tune_markers", disabled=is_disabled, session=session)
         ui.update_action_button("fit_markers", disabled=is_disabled, session=session)
         ui.update_action_button("estimate_tilt", disabled=is_disabled, session=session)
 
@@ -2943,11 +3057,62 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Find the global maximum in the visible range
         if len(visible_y) > 0:
+            # Find integer maximum first
             max_idx = np.argmax(visible_y)
-            max_x = visible_x[max_idx]
-            max_y = visible_y[max_idx]
+            max_x_int = visible_x[max_idx]
+            max_y_int = visible_y[max_idx]
             
-            print(f"Global maximum found at x={max_x:.3f}, y={max_y:.3f}")
+            print(f"Integer maximum found at x={max_x_int:.3f}, y={max_y_int:.3f}")
+            
+            # Fit Gaussian around the maximum for sub-pixel precision
+            try:
+                # Define fitting window: ±2 pixels around the maximum
+                window_size = 2
+                
+                # Find indices within ±2 pixels of the maximum
+                mask = np.abs(visible_x - max_x_int) <= window_size
+                
+                if np.sum(mask) >= 5:  # Need at least 5 points for Gaussian fitting
+                    fit_x = visible_x[mask]
+                    fit_y = visible_y[mask]
+                    
+                    # Define Gaussian function: y = a * exp(-((x - mu)^2) / (2 * sigma^2)) + c
+                    def gaussian(x, a, mu, sigma, c):
+                        return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                    
+                    # Initial parameter guesses
+                    a_guess = max_y_int  # amplitude
+                    mu_guess = max_x_int  # center
+                    sigma_guess = 1.0     # width
+                    c_guess = np.min(fit_y)  # offset
+                    
+                    # Fit the Gaussian
+                    from scipy.optimize import curve_fit
+                    popt, _ = curve_fit(gaussian, fit_x, fit_y, 
+                                      p0=[a_guess, mu_guess, sigma_guess, c_guess],
+                                      maxfev=1000)
+                    
+                    # Extract fitted parameters
+                    a_fit, mu_fit, sigma_fit, c_fit = popt
+                    
+                    # Use the fitted center as the refined maximum position
+                    max_x = mu_fit
+                    max_y = gaussian(mu_fit, *popt)
+                    
+                    print(f"Gaussian fit successful: center={mu_fit:.5f}, amplitude={a_fit:.3f}, sigma={sigma_fit:.3f}")
+                    print(f"Sub-pixel maximum at x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
+                    
+                else:
+                    # Not enough points for fitting, use integer maximum
+                    max_x = max_x_int
+                    max_y = max_y_int
+                    print(f"Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
+                    
+            except Exception as e:
+                # Gaussian fitting failed, use integer maximum
+                max_x = max_x_int
+                max_y = max_y_int
+                print(f"Gaussian fitting failed ({e}), using integer maximum")
             
             # Calculate apix value corresponding to the maximum position
             calculated_apix = None
@@ -2966,7 +3131,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         # Update the apix slider and text input with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
                         ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
-                        print(f"Updated apix to {calculated_apix:.3f} Å/px based on maximum at x={max_x:.3f}")
+                        print(f"Updated apix to {calculated_apix:.3f} Å/px based on Gaussian-fitted maximum at x={max_x:.5f}")
                     else:
                         print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
                         calculated_apix = None  # Mark as invalid
@@ -2976,7 +3141,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 print("Could not calculate apix - no FFT calculation state available")
             
             # ALWAYS add vertical line at max position regardless of apix calculation success
-            print(f"Adding vertical line at max position x={max_x:.3f}, y={max_y:.3f}")
+            print(f"Adding vertical line at max position x={max_x:.5f}, y={max_y:.3f}")
             
             try:
                 with widget.batch_update():
@@ -3019,9 +3184,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                     
                     # Create hover info with apix if available
                     if calculated_apix is not None:
-                        hover_info = f'<b>Global Max</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+                        hover_info = f'<b>Global Max (Gaussian-fitted)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
                     else:
-                        hover_info = f'<b>Global Max</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<extra></extra>'
+                        hover_info = f'<b>Global Max (Gaussian-fitted)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<extra></extra>'
                     
                     # Add new vertical line at max position with enhanced visibility
                     line_trace = go.Scatter(
