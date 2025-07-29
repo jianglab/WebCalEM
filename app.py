@@ -3102,16 +3102,24 @@ def server(input: Inputs, output: Outputs, session: Session):
                     print(f"Gaussian fit successful: center={mu_fit:.5f}, amplitude={a_fit:.3f}, sigma={sigma_fit:.3f}")
                     print(f"Sub-pixel maximum at x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
                     
+                    # Store Gaussian parameters for overlay
+                    gaussian_params = popt
+                    gaussian_fit_range = (fit_x.min(), fit_x.max())
+                    
                 else:
                     # Not enough points for fitting, use integer maximum
                     max_x = max_x_int
                     max_y = max_y_int
+                    gaussian_params = None
+                    gaussian_fit_range = None
                     print(f"Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
                     
             except Exception as e:
                 # Gaussian fitting failed, use integer maximum
                 max_x = max_x_int
                 max_y = max_y_int
+                gaussian_params = None
+                gaussian_fit_range = None
                 print(f"Gaussian fitting failed ({e}), using integer maximum")
             
             # Calculate apix value corresponding to the maximum position
@@ -3145,16 +3153,16 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             try:
                 with widget.batch_update():
-                    # Remove any existing max markers (vertical lines with name 'max_marker')
+                    # Remove any existing max markers and Gaussian fits
                     traces_to_keep = []
                     removed_count = 0
                     for trace in widget.data:
-                        if not (hasattr(trace, 'name') and trace.name == 'max_marker'):
+                        if not (hasattr(trace, 'name') and (trace.name == 'max_marker' or trace.name == 'gaussian_fit')):
                             traces_to_keep.append(trace)
                         else:
                             removed_count += 1
                     widget.data = traces_to_keep
-                    print(f"Removed {removed_count} existing max markers")
+                    print(f"Removed {removed_count} existing max markers and Gaussian fits")
                     
                     # Get current visible range from widget (what user is actually seeing)
                     current_x_range = widget.layout.xaxis.range
@@ -3201,6 +3209,32 @@ def server(input: Inputs, output: Outputs, session: Session):
                     )
                     
                     widget.add_trace(line_trace)
+                    
+                    # Add Gaussian curve overlay if fitting was successful
+                    if gaussian_params is not None and gaussian_fit_range is not None:
+                        # Create high-resolution x points for smooth curve
+                        x_smooth = np.linspace(gaussian_fit_range[0], gaussian_fit_range[1], 100)
+                        
+                        # Calculate Gaussian curve using fitted parameters
+                        def gaussian(x, a, mu, sigma, c):
+                            return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                        
+                        y_smooth = gaussian(x_smooth, *gaussian_params)
+                        
+                        # Create Gaussian curve trace
+                        gaussian_trace = go.Scatter(
+                            x=x_smooth,
+                            y=y_smooth,
+                            mode='lines',
+                            line=dict(color='red', width=2, dash='dot'),
+                            name='gaussian_fit',
+                            showlegend=False,
+                            hovertemplate='<b>Gaussian Fit</b><br>x: %{x:.5f}<br>y: %{y:.3f}<extra></extra>',
+                            opacity=0.8
+                        )
+                        
+                        widget.add_trace(gaussian_trace)
+                        print(f"Gaussian curve overlay added: range [{gaussian_fit_range[0]:.3f}, {gaussian_fit_range[1]:.3f}]")
                     
                     print(f"Vertical line added successfully:")
                     print(f"  - Position: x={max_x:.3f}")
