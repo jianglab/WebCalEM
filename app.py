@@ -182,12 +182,12 @@ app_ui = ui.page_sidebar(
                     ),
                 ),
                 ui.div(
-                    {"style": "display: flex; gap: 10px; justify-content: center;"},
-                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary"),
-                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary"),
+                    {"style": "display: flex; gap: 8px; justify-content: center;"},
+                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
+                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
                     #ui.input_action_button("clear_measurement", "Clear Measurement", class_="btn-secondary"),
-                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary"),
-                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary"),
+                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
+                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
                 ),
             ),
             ui.div(
@@ -2146,17 +2146,22 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(autoscale_trigger)
     def _():
         """Autoscale FFT plot when triggered by Calc FFT button."""
-        #print("Autoscaling FFT plot")
+        print("Autoscaling FFT plot to fit card")
         
         widget = fft_widget.get()
         if widget is not None:
             with widget.batch_update():
+                # Reset zoom to show full image
                 widget.layout.xaxis.autorange = True
                 widget.layout.yaxis.autorange = True
-            #print("✅ FFT plot auto-scaled")
+                # Ensure square aspect ratio for FFT images
+                widget.layout.xaxis.scaleanchor = "y"
+                widget.layout.xaxis.scaleratio = 1
+                # Set margins to maximize image size within card
+                widget.layout.margin = dict(l=40, r=40, t=40, b=40)
+            print("✅ FFT plot auto-scaled to fit card with square aspect ratio")
         else:
-            pass
-            #print("No FFT widget available for autoscaling")
+            print("No FFT widget available for autoscaling")
 
     # Restore the Shiny relayout event handler for fft_with_circle
     @reactive.Effect
