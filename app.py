@@ -573,6 +573,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Add separate reactive value for tuned markers (red circles from local maxima)
     tuned_markers_storage = reactive.Value([])
     
+    # Add separate reactive value for tuned resolution ring
+    tuned_resolution_radius = reactive.Value(None)
+    
     # Add separate reactive value for current mode to avoid FFT re-renders
     current_mode_storage = reactive.Value('Resolution Ring')
     
@@ -642,7 +645,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _():
         """Initialize Fit button state."""
         is_disabled = input.label_mode() != "Lattice Point"
-        ui.update_action_button("tune_markers", disabled=is_disabled, session=session)
+        # Tune Markers now works in both modes, so don't disable it
         ui.update_action_button("fit_markers", disabled=is_disabled, session=session)
         ui.update_action_button("estimate_tilt", disabled=is_disabled, session=session)
     
@@ -722,6 +725,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             ellipse_params_storage.set(None)
             # Also clear the tuned markers storage
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
+            # Also clear the tuned resolution ring storage
+            tuned_resolution_radius.set(None)
         
         # Clear drawn circles for all modes
         new_state['drawn_circles'] = []
@@ -735,7 +741,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Remove all ellipse_fit traces using index-based approach (more reliable)
                 ellipse_indices = []
                 for i, trace in enumerate(fft_widget_instance.data):
-                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
+                    if hasattr(trace, 'name') and trace.name and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -805,6 +811,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_green_storage.set(None)
             tilt_info_red_storage.set(None)
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
             
             # Reset FFT state to clear drawn circles and measurements
             fft_state.set({
@@ -983,7 +990,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Remove any existing ellipse_fit traces (both green and red)
                 ellipse_indices = []
                 for i, trace in enumerate(fft_widget_instance.data):
-                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
+                    if hasattr(trace, 'name') and trace.name and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -1023,62 +1030,190 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.Effect
     @reactive.event(input.tune_markers)
     def _():
-        """Handle Tune Markers button click to find local maxima around lattice points."""
-        # Check if we're in Lattice Point mode
-        if input.label_mode() != 'Lattice Point':
-            return
-            
-        # Get lattice points from storage
-        lattice_points = list(lattice_points_storage.get())
-        if len(lattice_points) == 0:
-            print("No lattice points available for tuning.")
-            return
-            
-        # Get the cached FFT image data
-        cached_fft = cached_fft_image.get()
-        if cached_fft is None:
-            print("No FFT image available for tuning markers.")
-            return
-            
-        # Convert PIL image to numpy array for processing
-        fft_array = np.array(cached_fft)
-        if len(fft_array.shape) == 3:  # RGB image
-            fft_array = np.mean(fft_array, axis=2)  # Convert to grayscale
-            
-        tuned_points = []
+        """Handle Tune Markers button click to find super-resolution maxima."""
+        current_mode = input.label_mode()
         
-        # Process each lattice point
-        for x, y in lattice_points:
-            # Convert to integer coordinates
-            ix, iy = int(round(x)), int(round(y))
-            
-            # Define 5x5 neighborhood bounds
-            x_min = max(0, ix - 2)
-            x_max = min(fft_array.shape[1], ix + 3)
-            y_min = max(0, iy - 2)
-            y_max = min(fft_array.shape[0], iy + 3)
-            
-            # Extract 5x5 neighborhood
-            neighborhood = fft_array[y_min:y_max, x_min:x_max]
-            
-            if neighborhood.size == 0:
-                # If neighborhood is empty, keep original point
-                tuned_points.append((x, y))
-                continue
+        if current_mode == 'Lattice Point':
+            # Lattice Point mode: 2D Gaussian fitting for crosshairs
+            lattice_points = list(lattice_points_storage.get())
+            if len(lattice_points) == 0:
+                print("No lattice points available for tuning.")
+                return
                 
-            # Find local maximum in neighborhood
-            max_idx = np.unravel_index(np.argmax(neighborhood), neighborhood.shape)
+            # Get the cached FFT image data
+            cached_fft = cached_fft_image.get()
+            if cached_fft is None:
+                print("No FFT image available for tuning markers.")
+                return
+                
+            # Convert PIL image to numpy array for processing
+            fft_array = np.array(cached_fft)
+            if len(fft_array.shape) == 3:  # RGB image
+                fft_array = np.mean(fft_array, axis=2)  # Convert to grayscale
+                
+            tuned_points = []
             
-            # Convert back to image coordinates
-            tuned_x = x_min + max_idx[1]
-            tuned_y = y_min + max_idx[0]
+            # Window size should match green circle radius (8 pixels)
+            window_radius = 8
             
-            tuned_points.append((tuned_x, tuned_y))
-            print(f"Tuned point: ({x:.1f}, {y:.1f}) -> ({tuned_x}, {tuned_y})")
+            # Define 2D Gaussian function
+            def gaussian_2d(coords, amplitude, x0, y0, sigma_x, sigma_y, offset):
+                x, y = coords
+                return amplitude * np.exp(-((x - x0)**2 / (2 * sigma_x**2) + (y - y0)**2 / (2 * sigma_y**2))) + offset
             
-        # Store tuned markers separately
-        tuned_markers_storage.set(tuned_points)
-        print(f"Tuned {len(tuned_points)} markers to local maxima.")
+            # Process each lattice point with 2D Gaussian fitting
+            for x, y in lattice_points:
+                # Convert to integer coordinates for window extraction
+                ix, iy = int(round(x)), int(round(y))
+                
+                # Define window bounds (same size as green circle)
+                x_min = max(0, ix - window_radius)
+                x_max = min(fft_array.shape[1], ix + window_radius + 1)
+                y_min = max(0, iy - window_radius)
+                y_max = min(fft_array.shape[0], iy + window_radius + 1)
+                
+                # Extract window around the lattice point
+                window = fft_array[y_min:y_max, x_min:x_max]
+                
+                if window.size < 25:  # Need minimum window size for fitting
+                    tuned_points.append((x, y))
+                    print(f"Window too small for point ({x:.1f}, {y:.1f}), keeping original")
+                    continue
+                
+                try:
+                    # Create coordinate arrays for the window
+                    window_height, window_width = window.shape
+                    xx, yy = np.meshgrid(np.arange(window_width), np.arange(window_height))
+                    
+                    # Flatten for fitting
+                    coords = np.vstack([xx.ravel(), yy.ravel()])
+                    data = window.ravel()
+                    
+                    # Initial parameter guesses
+                    amplitude_guess = np.max(window) - np.min(window)
+                    x0_guess = window_width / 2  # Center of window
+                    y0_guess = window_height / 2  # Center of window
+                    sigma_guess = window_radius / 3  # Reasonable sigma
+                    offset_guess = np.min(window)
+                    
+                    # Fit 2D Gaussian
+                    from scipy.optimize import curve_fit
+                    popt, _ = curve_fit(
+                        gaussian_2d, 
+                        coords, 
+                        data,
+                        p0=[amplitude_guess, x0_guess, y0_guess, sigma_guess, sigma_guess, offset_guess],
+                        maxfev=1000,
+                        bounds=([0, 0, 0, 0.5, 0.5, 0], 
+                               [np.inf, window_width, window_height, window_radius, window_radius, np.inf])
+                    )
+                    
+                    # Extract fitted center coordinates
+                    _, fitted_x, fitted_y, sigma_x, sigma_y, _ = popt
+                    
+                    # Convert back to image coordinates
+                    tuned_x = x_min + fitted_x
+                    tuned_y = y_min + fitted_y
+                    
+                    tuned_points.append((tuned_x, tuned_y))
+                    print(f"2D Gaussian fit: ({x:.1f}, {y:.1f}) -> ({tuned_x:.3f}, {tuned_y:.3f}), σ=({sigma_x:.2f}, {sigma_y:.2f})")
+                    
+                except Exception as e:
+                    # Gaussian fitting failed, keep original point
+                    tuned_points.append((x, y))
+                    print(f"2D Gaussian fitting failed for ({x:.1f}, {y:.1f}): {e}, keeping original")
+                
+            # Store tuned markers separately
+            tuned_markers_storage.set(tuned_points)
+            print(f"Tuned {len(tuned_points)} lattice markers using 2D Gaussian fitting.")
+            
+        elif current_mode == 'Resolution Ring':
+            # Resolution Ring mode: 1D radial profile Gaussian fitting
+            current_state = fft_state.get()
+            resolution_radius = current_state.get('resolution_radius')
+            
+            if resolution_radius is None:
+                print("No resolution ring available for tuning.")
+                return
+                
+            # Get 1D FFT data for radial profile
+            plot_data = fft_1d_data()
+            if plot_data is None:
+                print("No 1D FFT data available for tuning.")
+                return
+                
+            x_data = plot_data['x_data']
+            y_data = plot_data['y_data']
+            
+            # Find the closest data point to the clicked resolution radius
+            radius_idx = np.argmin(np.abs(x_data - resolution_radius))
+            original_radius = x_data[radius_idx]
+            
+            # Use same window size as Find Max function for consistency
+            window_half_size = input.gaussian_window() / 2.0
+            
+            # Find indices within ±window_half_size pixels (same as Find Max)
+            mask = np.abs(x_data - original_radius) <= window_half_size
+            
+            if np.sum(mask) < 5:
+                print(f"Not enough points for 1D Gaussian fitting around radius {original_radius:.2f}")
+                return
+                
+            # Extract window data
+            fit_x = x_data[mask]
+            fit_y = y_data[mask]
+            
+            try:
+                # Define Gaussian function (identical to Find Max)
+                def gaussian(x, a, mu, sigma, c):
+                    return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                
+                # Initial parameter guesses (identical to Find Max)
+                max_y_fit = np.max(fit_y)  # Find maximum in fitting window
+                a_guess = max_y_fit  # amplitude (absolute maximum value)
+                mu_guess = original_radius  # center
+                sigma_guess = 1.0     # width
+                c_guess = np.min(fit_y)  # offset
+                
+                # Fit Gaussian (identical to Find Max)
+                from scipy.optimize import curve_fit
+                popt, _ = curve_fit(
+                    gaussian, 
+                    fit_x, 
+                    fit_y,
+                    p0=[a_guess, mu_guess, sigma_guess, c_guess],
+                    maxfev=1000
+                )
+                
+                # Extract fitted parameters (identical to Find Max)
+                a_fit, mu_fit, sigma_fit, c_fit = popt
+                tuned_radius = mu_fit
+                
+                # Store tuned resolution ring
+                tuned_resolution_radius.set(tuned_radius)
+                print(f"1D Gaussian fit: radius {original_radius:.3f} -> {tuned_radius:.5f}, σ={sigma_fit:.3f}")
+                
+                # Calculate and update apix based on tuned radius
+                resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+                if resolution is not None:
+                    # Get FFT image size for apix calculation
+                    cached_fft = cached_fft_image.get()
+                    if cached_fft is not None:
+                        fft_image_size = cached_fft.size[0]  # PIL image size
+                        calculated_apix = (tuned_radius * resolution) / fft_image_size
+                        
+                        # Update the apix slider with the tuned value
+                        ui.update_slider("apix_slider", value=calculated_apix, session=session)
+                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
+                        print(f"Updated apix to {calculated_apix:.3f} Å/px based on tuned resolution ring.")
+                
+                print(f"Tuned resolution ring using 1D radial profile Gaussian fitting.")
+                
+            except Exception as e:
+                print(f"1D Gaussian fitting failed for radius {original_radius:.3f}: {e}")
+                
+        else:
+            print(f"Tune Markers not supported for mode: {current_mode}")
 
     @reactive.Effect
     @reactive.event(input.estimate_tilt)
@@ -1295,6 +1430,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_green_storage.set(None)
             tilt_info_red_storage.set(None)
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
             fft_state.set({
                 'mode': 'Resolution Ring',
                 'resolution_radius': None,
@@ -1363,6 +1499,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_green_storage.set(None)
             tilt_info_red_storage.set(None)
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
             fft_state.set({
                 'mode': 'Resolution Ring',
                 'resolution_radius': None,
@@ -1834,6 +1971,14 @@ def server(input: Inputs, output: Outputs, session: Session):
                         'editable': True  # Make the shape editable
                     }
                     
+                    # Update FFT state with resolution ring information
+                    current_state = fft_state.get()
+                    new_state = current_state.copy()
+                    new_state['resolution_radius'] = r
+                    new_state['resolution_click_x'] = click_x
+                    new_state['resolution_click_y'] = click_y
+                    fft_state.set(new_state)
+                    
                     # Update the figure with the new shape and enable shape editing
                     with fw.batch_update():
                         fw.layout.shapes = [new_circle]
@@ -1924,9 +2069,9 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     # Effect to update overlays when lattice points, mode, or ellipse parameters change
     @reactive.Effect
-    @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage, tuned_markers_storage)
+    @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage, tuned_markers_storage, tuned_resolution_radius)
     def _():
-        """Update FFT overlays when lattice points, tuned markers, or mode changes."""
+        """Update FFT overlays when lattice points, tuned markers, tuned resolution, or mode changes."""
         # print("Updating FFT overlays for lattice points or mode change")
         
         widget = fft_widget.get()
@@ -1950,13 +2095,26 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hasattr(s.line, 'color') and s.line.color == 'green' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
-            # Check if this is a tuned marker circle (red, width 2, hollow)
-            is_tuned_circle = (
+            # Check if this is a tuned marker crosshair (red line, width 2)
+            is_tuned_crosshair = (
+                hasattr(s, 'type') and s.type == 'line' and
+                hasattr(s, 'line') and s.line and
+                hasattr(s.line, 'color') and s.line.color == 'red' and
+                hasattr(s.line, 'width') and s.line.width == 2
+            )
+            # Check if this is a tuned resolution ring (red circle, width 2)
+            is_tuned_resolution_ring = (
                 hasattr(s, 'type') and s.type == 'circle' and
                 hasattr(s, 'line') and s.line and
                 hasattr(s.line, 'color') and s.line.color == 'red' and
-                hasattr(s.line, 'width') and s.line.width == 2 and
-                hasattr(s, 'fillcolor') and s.fillcolor == 'rgba(0,0,0,0)'
+                hasattr(s.line, 'width') and s.line.width == 2
+            )
+            # Check if this is a user-clicked resolution ring (cyan circle, width 2)
+            is_user_resolution_ring = (
+                hasattr(s, 'type') and s.type == 'circle' and
+                hasattr(s, 'line') and s.line and
+                hasattr(s.line, 'color') and s.line.color == 'cyan' and
+                hasattr(s.line, 'width') and s.line.width == 2
             )
             # Check if this is a fitted ellipse shape (legacy - ellipses are now traces, not shapes)
             is_fitted_ellipse_shape = (
@@ -1964,14 +2122,16 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hasattr(s, 'line') and s.line and
                 hasattr(s.line, 'color') and s.line.color == 'red'
             )
-            # Always remove fitted ellipse shapes (legacy cleanup) and lattice/tuned circles based on mode
+            # Always remove fitted ellipse shapes (legacy cleanup) and lattice/tuned markers based on mode
             should_remove = is_fitted_ellipse_shape  # Always remove legacy ellipse shapes
             if current_mode == 'Resolution Ring':
-                # Also remove lattice and tuned circles when switching to Ring mode
-                should_remove = should_remove or is_lattice_circle or is_tuned_circle
+                # Remove lattice circles and tuned crosshairs when in Ring mode, but keep cyan and red resolution rings
+                should_remove = should_remove or is_lattice_circle or is_tuned_crosshair
+                # Remove tuned resolution rings to re-add them fresh (but keep user-clicked cyan rings)
+                should_remove = should_remove or is_tuned_resolution_ring
             else:  # Lattice Point mode
-                # Also remove lattice and tuned circles (they will be re-added if they exist)
-                should_remove = should_remove or is_lattice_circle or is_tuned_circle
+                # Remove lattice circles, tuned crosshairs, tuned resolution rings, and user resolution rings (lattice items will be re-added)
+                should_remove = should_remove or is_lattice_circle or is_tuned_crosshair or is_tuned_resolution_ring or is_user_resolution_ring
             
             if not should_remove:
                 preserved_shapes.append(s)
@@ -1992,21 +2152,55 @@ def server(input: Inputs, output: Outputs, session: Session):
                 preserved_shapes.append(lattice_circle)
                 # print(f"[DEBUG] Added green circle at ({x}, {y})")
                 
-            # Add tuned markers as red hollow circles
-            # print(f"[DEBUG] Adding {len(tuned_markers)} red hollow circles for tuned markers")
+            # Add tuned markers as red crosshairs
+            # print(f"[DEBUG] Adding {len(tuned_markers)} red crosshairs for tuned markers")
             for pt in tuned_markers:
                 x, y = pt[0], pt[1]
-                # Add red hollow circle for each tuned marker
-                tuned_circle = {
-                    'type': 'circle',
-                    'x0': x-8, 'y0': y-8, 'x1': x+8, 'y1': y+8,
+                crosshair_size = 6  # Half-length of crosshair arms
+                
+                # Add horizontal line of crosshair
+                horizontal_line = {
+                    'type': 'line',
+                    'x0': x - crosshair_size, 'y0': y, 'x1': x + crosshair_size, 'y1': y,
                     'line': {'color': 'red', 'width': 2},
-                    'fillcolor': 'rgba(0,0,0,0)',  # Transparent fill (hollow)
                     'layer': 'above',
                     'editable': False
                 }
-                preserved_shapes.append(tuned_circle)
-                # print(f"[DEBUG] Added red hollow circle at ({x}, {y})")
+                preserved_shapes.append(horizontal_line)
+                
+                # Add vertical line of crosshair
+                vertical_line = {
+                    'type': 'line',
+                    'x0': x, 'y0': y - crosshair_size, 'x1': x, 'y1': y + crosshair_size,
+                    'line': {'color': 'red', 'width': 2},
+                    'layer': 'above',
+                    'editable': False
+                }
+                preserved_shapes.append(vertical_line)
+                # print(f"[DEBUG] Added red crosshair at ({x}, {y})")
+        
+        # Add tuned resolution ring if in Resolution Ring mode and available
+        if current_mode == 'Resolution Ring':
+            tuned_radius = tuned_resolution_radius.get()
+            if tuned_radius is not None:
+                # Get FFT image center (same as original resolution ring logic)
+                cached_fft = cached_fft_image.get()
+                if cached_fft is not None:
+                    fft_array = np.array(cached_fft)
+                    N = fft_array.shape[0]
+                    cx = cy = N/2
+                    
+                    # Create red tuned resolution ring
+                    tuned_ring = {
+                        'type': 'circle',
+                        'x0': cx - tuned_radius, 'y0': cy - tuned_radius, 
+                        'x1': cx + tuned_radius, 'y1': cy + tuned_radius,
+                        'line': {'color': 'red', 'width': 2},
+                        'layer': 'above',
+                        'editable': False
+                    }
+                    preserved_shapes.append(tuned_ring)
+                    # print(f"[DEBUG] Added red tuned resolution ring at radius {tuned_radius:.3f}")
         # else:
             # print(f"[DEBUG] Not adding lattice circles - mode is: {current_mode}")
         
@@ -2025,7 +2219,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Use index-based removal (more reliable than reassigning data)
                 ellipse_indices = []
                 for i, trace in enumerate(widget.data):
-                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
+                    if hasattr(trace, 'name') and trace.name and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -2075,7 +2269,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Decide what to preserve based on current mode
             should_preserve = False
-            if current_mode == 'Ring':
+            if current_mode == 'Resolution Ring':
                 # In Ring mode: preserve drawn circles/lines but not lattice circles or ellipses
                 should_preserve = is_drawn_circle_or_line and not is_fitted_ellipse
             else:  # Lattice Point mode
@@ -2115,7 +2309,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Use index-based removal (more reliable than reassigning data)
                 ellipse_indices = []
                 for i, trace in enumerate(widget.data):
-                    if hasattr(trace, 'name') and ('ellipse_fit' in trace.name):
+                    if hasattr(trace, 'name') and trace.name and ('ellipse_fit' in trace.name):
                         ellipse_indices.append(i)
                 
                 # Remove ellipse traces from the end to avoid index shifting
@@ -2924,8 +3118,10 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Update FFT circle positions by clearing click positions
         # This will force the circles to use calculated positions instead of clicked positions
+        # Note: Skip clearing if resolution ring was just clicked (to preserve cyan circle)
         current_state = fft_state.get()
-        if current_state['mode'] == 'Resolution Ring':
+        if current_state['mode'] == 'Resolution Ring' and current_state.get('resolution_radius') is None:
+            # Only clear if there's no active resolution ring (i.e., not just clicked)
             new_state = current_state.copy()
             new_state['resolution_radius'] = None
             new_state['resolution_click_x'] = None
@@ -2962,6 +3158,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             ellipse_params_storage.set(None)
             # Also clear the tuned markers storage
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
+            # Also clear the tuned resolution ring storage
+            tuned_resolution_radius.set(None)
             #new_state['drawn_circles'] = []
             # Update the separate mode storage
             current_mode_storage.set('Resolution Ring')
@@ -2986,6 +3185,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             ellipse_params_storage.set(None)
             # Also clear the tuned markers storage
             tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
+            # Also clear the tuned resolution ring storage
+            tuned_resolution_radius.set(None)
             # Update the separate mode storage
             current_mode_storage.set('Lattice Point')
         
@@ -2999,7 +3201,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Update Fit button state
         is_disabled = input.label_mode() != "Lattice Point"
-        ui.update_action_button("tune_markers", disabled=is_disabled, session=session)
+        # Tune Markers now works in both modes, so don't disable it
         ui.update_action_button("fit_markers", disabled=is_disabled, session=session)
         ui.update_action_button("estimate_tilt", disabled=is_disabled, session=session)
 
