@@ -215,6 +215,14 @@ app_ui = ui.page_sidebar(
                             ui.input_slider("window_size", "Window Size", min=1, max=11, value=3, step=2),
                         ),
                     ),
+                    ui.div(
+                        {"style": "margin-bottom: 10px;"},
+                        ui.input_checkbox("super_resolution", "Super Resolution", value=True),
+                        ui.panel_conditional(
+                            "input.super_resolution",
+                            ui.input_slider("gaussian_window", "Gaussian Window (pixels)", min=1, max=21, value=5, step=2),
+                        ),
+                    ),
                     ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
                 ),
             ),
@@ -889,8 +897,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Function to create working points for ellipse fitting
         def create_working_points(points):
             working_points = points.copy()
-            # If fewer than 6 points, create additional points by mirroring and jittering
-            if len(points) < 6:
+            # If fewer than 3 points, create additional points by mirroring and jittering
+            if len(points) < 3:
                 print(f"Only {len(points)} points available. Creating additional points for better ellipse fitting...")
                 
                 # Mirror each point through the center and add jittered versions
@@ -2023,8 +2031,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Remove ellipse traces from the end to avoid index shifting
                 for i in reversed(ellipse_indices):
                     widget.data = widget.data[:i] + widget.data[i+1:]
-            # Note: Do NOT add ellipse traces here - only fit_markers should add them
-            # This prevents duplicate ellipses when lattice points are added after fitting
         
         # print(f"Updated FFT overlays - lattice points: {len(lattice_points)}, mode: {current_mode}")
 
@@ -3064,63 +3070,73 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             print(f"Integer maximum found at x={max_x_int:.3f}, y={max_y_int:.3f}")
             
-            # Fit Gaussian around the maximum for sub-pixel precision
-            try:
-                # Define fitting window: ±2 pixels around the maximum
-                window_size = 2
-                
-                # Find indices within ±2 pixels of the maximum
-                mask = np.abs(visible_x - max_x_int) <= window_size
-                
-                if np.sum(mask) >= 5:  # Need at least 5 points for Gaussian fitting
-                    fit_x = visible_x[mask]
-                    fit_y = visible_y[mask]
+            # Check if Super Resolution mode is enabled
+            if input.super_resolution():
+                # Super Resolution mode: Fit Gaussian around the maximum for sub-pixel precision
+                try:
+                    # Get window size from slider (convert to half-window for ± range)
+                    window_half_size = input.gaussian_window() / 2.0
                     
-                    # Define Gaussian function: y = a * exp(-((x - mu)^2) / (2 * sigma^2)) + c
-                    def gaussian(x, a, mu, sigma, c):
-                        return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                    # Find indices within window around the maximum
+                    mask = np.abs(visible_x - max_x_int) <= window_half_size
                     
-                    # Initial parameter guesses
-                    a_guess = max_y_int  # amplitude
-                    mu_guess = max_x_int  # center
-                    sigma_guess = 1.0     # width
-                    c_guess = np.min(fit_y)  # offset
-                    
-                    # Fit the Gaussian
-                    from scipy.optimize import curve_fit
-                    popt, _ = curve_fit(gaussian, fit_x, fit_y, 
-                                      p0=[a_guess, mu_guess, sigma_guess, c_guess],
-                                      maxfev=1000)
-                    
-                    # Extract fitted parameters
-                    a_fit, mu_fit, sigma_fit, c_fit = popt
-                    
-                    # Use the fitted center as the refined maximum position
-                    max_x = mu_fit
-                    max_y = gaussian(mu_fit, *popt)
-                    
-                    print(f"Gaussian fit successful: center={mu_fit:.5f}, amplitude={a_fit:.3f}, sigma={sigma_fit:.3f}")
-                    print(f"Sub-pixel maximum at x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
-                    
-                    # Store Gaussian parameters for overlay
-                    gaussian_params = popt
-                    gaussian_fit_range = (fit_x.min(), fit_x.max())
-                    
-                else:
-                    # Not enough points for fitting, use integer maximum
+                    if np.sum(mask) >= 5:  # Need at least 5 points for Gaussian fitting
+                        fit_x = visible_x[mask]
+                        fit_y = visible_y[mask]
+                        
+                        # Define Gaussian function: y = a * exp(-((x - mu)^2) / (2 * sigma^2)) + c
+                        def gaussian(x, a, mu, sigma, c):
+                            return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                        
+                        # Initial parameter guesses
+                        a_guess = max_y_int  # amplitude
+                        mu_guess = max_x_int  # center
+                        sigma_guess = 1.0     # width
+                        c_guess = np.min(fit_y)  # offset
+                        
+                        # Fit the Gaussian
+                        from scipy.optimize import curve_fit
+                        popt, _ = curve_fit(gaussian, fit_x, fit_y, 
+                                          p0=[a_guess, mu_guess, sigma_guess, c_guess],
+                                          maxfev=1000)
+                        
+                        # Extract fitted parameters
+                        a_fit, mu_fit, sigma_fit, c_fit = popt
+                        
+                        # Use the fitted center as the refined maximum position
+                        max_x = mu_fit
+                        max_y = gaussian(mu_fit, *popt)
+                        
+                        print(f"Super Resolution: Gaussian fit successful with {input.gaussian_window()}-pixel window")
+                        print(f"  - Center: {mu_fit:.5f}, Amplitude: {a_fit:.3f}, Sigma: {sigma_fit:.3f}")
+                        print(f"  - Sub-pixel maximum: x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
+                        
+                        # Store Gaussian parameters for overlay
+                        gaussian_params = popt
+                        gaussian_fit_range = (fit_x.min(), fit_x.max())
+                        
+                    else:
+                        # Not enough points for fitting, use integer maximum
+                        max_x = max_x_int
+                        max_y = max_y_int
+                        gaussian_params = None
+                        gaussian_fit_range = None
+                        print(f"Super Resolution: Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
+                        
+                except Exception as e:
+                    # Gaussian fitting failed, use integer maximum
                     max_x = max_x_int
                     max_y = max_y_int
                     gaussian_params = None
                     gaussian_fit_range = None
-                    print(f"Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
-                    
-            except Exception as e:
-                # Gaussian fitting failed, use integer maximum
+                    print(f"Super Resolution: Gaussian fitting failed ({e}), using integer maximum")
+            else:
+                # Standard mode: Use integer maximum
                 max_x = max_x_int
                 max_y = max_y_int
                 gaussian_params = None
                 gaussian_fit_range = None
-                print(f"Gaussian fitting failed ({e}), using integer maximum")
+                print(f"Standard resolution mode: Using integer maximum")
             
             # Calculate apix value corresponding to the maximum position
             calculated_apix = None
@@ -3139,7 +3155,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                         # Update the apix slider and text input with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
                         ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
-                        print(f"Updated apix to {calculated_apix:.3f} Å/px based on Gaussian-fitted maximum at x={max_x:.5f}")
+                        if input.super_resolution():
+                            print(f"Updated apix to {calculated_apix:.3f} Å/px based on Gaussian-fitted maximum at x={max_x:.5f}")
+                        else:
+                            print(f"Updated apix to {calculated_apix:.3f} Å/px based on integer maximum at x={max_x:.3f}")
                     else:
                         print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
                         calculated_apix = None  # Mark as invalid
@@ -3191,17 +3210,25 @@ def server(input: Inputs, output: Outputs, session: Session):
                             print(f"WARNING: max_x={max_x:.3f} is outside visible x-range [{x_min_range:.3f}, {x_max_range:.3f}]")
                     
                     # Create hover info with apix if available
-                    if calculated_apix is not None:
-                        hover_info = f'<b>Global Max (Gaussian-fitted)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+                    if input.super_resolution() and gaussian_params is not None:
+                        # Super resolution mode with successful Gaussian fit
+                        if calculated_apix is not None:
+                            hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+                        else:
+                            hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<extra></extra>'
                     else:
-                        hover_info = f'<b>Global Max (Gaussian-fitted)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<extra></extra>'
+                        # Standard resolution mode
+                        if calculated_apix is not None:
+                            hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+                        else:
+                            hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<extra></extra>'
                     
                     # Add new vertical line at max position with enhanced visibility
                     line_trace = go.Scatter(
                         x=[max_x, max_x],
                         y=[y_min, y_max_range],
                         mode='lines',
-                        line=dict(color='red', width=3, dash='solid'),  # Made thicker and explicitly solid
+                        line=dict(color='red', width=1, dash='solid'),  # Slim vertical line
                         name='max_marker',
                         showlegend=False,
                         hovertemplate=hover_info,
@@ -3239,7 +3266,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     print(f"Vertical line added successfully:")
                     print(f"  - Position: x={max_x:.3f}")
                     print(f"  - Y-range: [{y_min:.1f}, {y_max_range:.1f}]")
-                    print(f"  - Line style: red, width=3, solid")
+                    print(f"  - Line style: red, width=1, solid")
                     print(f"  - Total traces in widget: {len(widget.data)}")
                     
                     # Force a refresh of the widget display
