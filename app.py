@@ -1283,6 +1283,22 @@ def server(input: Inputs, output: Outputs, session: Session):
                 small_axis, large_axis = sorted([a, b])
                 tilt_angle = calculate_tilt_angle(small_axis, large_axis)
                 
+                # Calculate the angle between major axis and x-axis
+                # theta is the angle of the first axis (a) from x-axis
+                # We need to determine if the first axis (a) is the minor or major axis
+                if a >= b:
+                    # a is the major axis, so theta is already the major axis angle
+                    major_axis_angle = theta
+                else:
+                    # a is the minor axis, so major axis is perpendicular (add π/2)
+                    major_axis_angle = theta + math.pi/2
+                
+                # Normalize angle to [-π/2, π/2] range
+                while major_axis_angle > math.pi/2:
+                    major_axis_angle -= math.pi
+                while major_axis_angle < -math.pi/2:
+                    major_axis_angle += math.pi
+                
                 # Calculate apix using the minor axis (untilted apix)
                 resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
                 untilted_apix = None
@@ -1295,7 +1311,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 apix_display = f"{untilted_apix:.3f}" if untilted_apix else "N/A"
                 print(f"{point_type.capitalize()} ellipse tilt: {math.degrees(tilt_angle):.2f}°, untilted apix: {apix_display}")
                 
-                return (small_axis, large_axis, tilt_angle, untilted_apix)
+                # Store ellipse orientation (major axis angle) for display purposes
+                return (small_axis, large_axis, tilt_angle, untilted_apix, major_axis_angle)
             except Exception as e:
                 print(f"{point_type.capitalize()} ellipse fitting failed: {e}")
                 return None
@@ -2513,31 +2530,55 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Format green ellipse results
         if green_tilt is not None:
-            small_axis, large_axis, tilt_angle, untilted_apix = green_tilt
+            # Handle both old (4-element) and new (5-element) formats
+            if len(green_tilt) >= 5:
+                small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = green_tilt
+                orientation_degrees = math.degrees(orientation_theta)
+            else:
+                small_axis, large_axis, tilt_angle, untilted_apix = green_tilt
+                orientation_degrees = None
+                
             tilt_angle_degrees = math.degrees(tilt_angle)
             
             apix_str = ""
             if untilted_apix is not None:
                 apix_str = f", Apix: {untilted_apix:.3f} Å/px"
             
+            orientation_str = ""
+            if orientation_degrees is not None:
+                orientation_str = f", Orientation: {orientation_degrees:.1f}°"
+            
             green_result = (f"🟢 User-clicked: Minor axis: {small_axis:.2f}, "
                            f"Major axis: {large_axis:.2f}, "
                            f"Tilt angle: {tilt_angle_degrees:.2f}°"
+                           f"{orientation_str}"
                            f"{apix_str}")
             results.append(green_result)
         
         # Format red ellipse results
         if red_tilt is not None:
-            small_axis, large_axis, tilt_angle, untilted_apix = red_tilt
+            # Handle both old (4-element) and new (5-element) formats
+            if len(red_tilt) >= 5:
+                small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = red_tilt
+                orientation_degrees = math.degrees(orientation_theta)
+            else:
+                small_axis, large_axis, tilt_angle, untilted_apix = red_tilt
+                orientation_degrees = None
+                
             tilt_angle_degrees = math.degrees(tilt_angle)
             
             apix_str = ""
             if untilted_apix is not None:
                 apix_str = f", Apix: {untilted_apix:.3f} Å/px"
             
+            orientation_str = ""
+            if orientation_degrees is not None:
+                orientation_str = f", Orientation: {orientation_degrees:.1f}°"
+            
             red_result = (f"🔴 Fine-tuned: Minor axis: {small_axis:.2f}, "
                          f"Major axis: {large_axis:.2f}, "
                          f"Tilt angle: {tilt_angle_degrees:.2f}°"
+                         f"{orientation_str}"
                          f"{apix_str}")
             results.append(red_result)
         
@@ -2548,8 +2589,23 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Fallback to legacy single tilt info
         tilt_info = tilt_info_storage.get()
         if tilt_info is not None:
-            # Check if we have the new format with untilted apix
-            if len(tilt_info) >= 4:
+            # Check if we have the new format with orientation (5 elements)
+            if len(tilt_info) >= 5:
+                small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = tilt_info
+                tilt_angle_degrees = math.degrees(tilt_angle)
+                orientation_degrees = math.degrees(orientation_theta)
+                
+                apix_str = ""
+                if untilted_apix is not None:
+                    apix_str = f", Estimated untilted apix: {untilted_apix:.3f} Å/px"
+                
+                return (f"Minor axis: {small_axis:.2f}, "
+                       f"Major axis: {large_axis:.2f}, "
+                       f"Tilt angle: {tilt_angle_degrees:.2f}°, "
+                       f"Orientation: {orientation_degrees:.1f}°"
+                       f"{apix_str}")
+            # Check if we have the format with untilted apix (4 elements)
+            elif len(tilt_info) >= 4:
                 small_axis, large_axis, tilt_angle, untilted_apix = tilt_info
                 tilt_angle_degrees = math.degrees(tilt_angle)
                 

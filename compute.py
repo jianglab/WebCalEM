@@ -93,29 +93,43 @@ def normalize(magnitude, contrast=2.0):
     return normalized
 
 
-def normalize_image(img: np.ndarray, contrast=2.0) -> np.ndarray:
+def normalize_image(img: np.ndarray, contrast=2.0, use_percentiles=False, low_percentile=1.0, high_percentile=99.0) -> np.ndarray:
     """
-    Normalize image data using mean and standard deviation.
+    Normalize image data using either mean/std or percentile-based clipping.
     
     Args:
         img: Input image array
-        contrast: Number of standard deviations to include in range
+        contrast: Number of standard deviations to include in range (if not using percentiles)
+        use_percentiles: If True, use percentile-based clipping instead of mean/std
+        low_percentile: Lower percentile for clipping (0-100)
+        high_percentile: Upper percentile for clipping (0-100)
         
     Returns:
         Normalized image array (0-255 uint8)
     """
     # Convert to float32 for calculations
     img_float = img.astype(np.float32)
-    mean = np.mean(img_float)
-    std = np.std(img_float)
     
-    # Calculate clip range based on mean ± contrast * std
-    clip_min = max(0, mean - contrast * std)
-    clip_max = min(img_float.max(), mean + contrast * std)
+    if use_percentiles:
+        # Use percentile-based clipping to remove outliers
+        clip_min = np.percentile(img_float, low_percentile)
+        clip_max = np.percentile(img_float, high_percentile)
+    else:
+        # Use mean ± contrast * std
+        mean = np.mean(img_float)
+        std = np.std(img_float)
+        clip_min = max(0, mean - contrast * std)
+        clip_max = min(img_float.max(), mean + contrast * std)
     
     # Clip and normalize to 0-255 range
     img_clipped = np.clip(img_float, clip_min, clip_max)
-    img_normalized = 255 * (img_clipped - clip_min) / (clip_max - clip_min + 1e-8)
+    
+    # Avoid division by zero
+    range_val = clip_max - clip_min
+    if range_val < 1e-8:
+        return np.full_like(img_clipped, 128, dtype=np.uint8)
+    
+    img_normalized = 255 * (img_clipped - clip_min) / range_val
     
     return img_normalized.astype(np.uint8)
 
@@ -141,6 +155,7 @@ def read_mrc_as_image(mrc_path: str) -> Image.Image:
 def load_image(path: Path) -> tuple[Image.Image, np.ndarray]:
     """
     Load an image file or MRC file and return as PIL Image and raw data.
+    Automatically normalizes bright images for proper display.
     
     Args:
         path: Path to the image or MRC file
@@ -151,10 +166,22 @@ def load_image(path: Path) -> tuple[Image.Image, np.ndarray]:
     if path.suffix.lower() == '.mrc':
         with mrcfile.open(str(path)) as mrc:
             data = mrc.data.astype(np.float32)
-            return Image.fromarray(data.astype(np.uint8)), data
+            # Use percentile-based normalization for MRC files to handle outliers
+            normalized_data = normalize_image(data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+            return Image.fromarray(normalized_data), data
     else:
         img = Image.open(path)
-        return img, np.array(img.convert("L")).astype(np.float32)
+        raw_data = np.array(img.convert("L")).astype(np.float32)
+        
+        # Check if the image is very bright (e.g., from projection images)
+        # If the image has values much higher than typical 8-bit range, normalize it
+        if raw_data.max() > 1000 or raw_data.std() > 1000:
+            print(f"Detected bright image (max: {raw_data.max():.1f}, std: {raw_data.std():.1f}). Applying percentile-based normalization...")
+            # Use percentile-based normalization to remove outliers on both ends
+            normalized_data = normalize_image(raw_data, use_percentiles=True, low_percentile=0.5, high_percentile=99.5)
+            return Image.fromarray(normalized_data), raw_data
+        else:
+            return img, raw_data
 
 
 def fft_image_with_matplotlib(region: np.ndarray, contrast=2.0, return_array=False):
