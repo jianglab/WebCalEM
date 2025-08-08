@@ -192,10 +192,10 @@ app_ui = ui.page_sidebar(
                 ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
                 ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
             ),
-            ui.div(
-                {"class": "card-footer"},
-                "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
-            ),
+            # ui.div(
+            #     {"class": "card-footer"},
+            #     "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
+            # ),
             full_screen=True,
         ),
         ui.card(
@@ -223,10 +223,10 @@ app_ui = ui.page_sidebar(
                     ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
                 ),
             ),
-            ui.div(
-                {"class": "card-footer"},
-                "Click to mark points or draw circles.",
-            ),
+            # ui.div(
+            #     {"class": "card-footer"},
+            #     "Click to mark points or draw circles.",
+            # ),
             full_screen=True,
         ),
         ui.card(
@@ -603,9 +603,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Add reactive value to store the FFT FigureWidget for in-place overlay updates
     fft_widget = reactive.Value(None)
     
-    # Add reactive value to store the polar heatmap FigureWidget
-    fft_heatmap_widget = reactive.Value(None)
-    
     # Add reactive value to store all drawn shapes
     drawn_shapes = reactive.Value([])
     
@@ -867,7 +864,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_red_storage.set(None)
             tuned_markers_storage.set([])
             tuned_resolution_radius.set(None)
-            
             
             # Reset FFT state to clear drawn circles and measurements
             fft_state.set({
@@ -1836,7 +1832,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             hoverinfo='none',
             name='selection_overlay',
             # Enable selection on this trace
-            selected=dict(marker=dict(opacity=0.6, color='red', size=3)),
+            selected=dict(marker=dict(opacity=0.8, color='white', size=4)),
             unselected=dict(marker=dict(opacity=0.0)),
         )
         figw.add_trace(scatter)
@@ -1848,16 +1844,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Configure selection behavior
             selectdirection='any',
             newselection=dict(
-                mode='immediate',
-                line=dict(
-                    color='red',
-                    width=3,
-                    dash='solid'
-                )
+                mode='immediate'
             ),
             modebar=dict(
-                add=['select2d', 'lasso2d', 'zoom', 'pan', 'reset+autorange'],
-                remove=['drawrect', 'eraseshape']
+                add=['select2d', 'zoom', 'pan', 'reset+autorange'],
+                remove=['drawrect','lasso2d', 'eraseshape']
             ),
             # Ensure selection events are captured
             uirevision='box_selection',
@@ -2735,9 +2726,17 @@ def server(input: Inputs, output: Outputs, session: Session):
             return go.Figure()
         
         try:
-            # Always use nominal apix for heatmap to prevent re-rendering on slider changes
+            # Check if we should use nominal apix (initial) or current apix (after slider changes)
             nominal_apix = float(input.nominal_apix())
-            range_apix = nominal_apix
+            current_apix = get_apix()
+            
+            # Use nominal apix for initial range, but update with current apix when slider changes
+            # If current apix is very close to nominal, use nominal (initial state)
+            # Otherwise use current apix (user moved the slider)
+            if abs(current_apix - nominal_apix) < 0.01:
+                range_apix = nominal_apix
+            else:
+                range_apix = current_apix
             
             # Compute polar heatmap data using unbinned coordinates
             heatmap_data = compute_fft_polar_heatmap_data(
@@ -2790,7 +2789,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             else:
                 x_range = [heatmap_data['radii'][0], heatmap_data['radii'][-1]]
             
-            # Calculate auto-zoom range (always use auto-zoom)
+            # Calculate target radius for auto-zoom
             # Get resolution from resolution type or custom value
             if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
                 resolution_map = {
@@ -2812,18 +2811,19 @@ def server(input: Inputs, output: Outputs, session: Session):
             region_size = calc_state['region'].size[0]  # Unbinned region size
             
             # Calculate target radius in pixels using the same formula as resolution_to_radius
+            # radius = (image_size * apix) / resolution
             target_radius = (region_size * nominal_apix) / target_resolution
             
-            # Set auto-zoom range: ±15 pixels around target radius
+            print(f"Auto-zoom calculation: resolution={target_resolution:.2f} Å, apix={nominal_apix:.3f} Å/px, region_size={region_size}")
+            print(f"Calculated target radius: {target_radius:.1f} px")
+            
+            # Set zoom range: ±15 pixels around target radius
             zoom_margin = 15
             y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
             y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
             
-            # Create title with auto-zoom info
-            title = f'FFT Profile Near Frequency of Interest<br>Target: {target_radius:.1f} px ({target_resolution:.2f} Å @ {nominal_apix:.3f} Å/px)'
-            
             fig.update_layout(
-                title=title,
+                title=f'FFT Profile Near Frequency of Interest<br>Target: {target_radius:.1f} px ({target_resolution:.2f} Å @ {nominal_apix:.3f} Å/px)',
                 xaxis_title='Angle (degrees)',
                 yaxis_title='Radius (pixels)',
                 height=400,
@@ -3964,7 +3964,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 if input.log_y():
                     z_data = np.log1p(z_data)
                 
-                # Calculate auto-zoom range (same as heatmap display)
+                # Calculate zoom range to limit search area (same as heatmap display)
                 # Get resolution and calculate target radius
                 if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
                     resolution_map = {
@@ -3985,12 +3985,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 region_size = calc_state['region'].size[0]
                 target_radius = (region_size * nominal_apix) / target_resolution
                 
-                # Define auto-zoom range: ±15 pixels around target radius
+                # Define zoom range: ±15 pixels around target radius
                 zoom_margin = 15
                 y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
                 y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
-                
-                print(f"Using auto-zoom range for Find Max: {y_min:.1f} - {y_max:.1f} px")
                 
                 # Filter radii indices to only search within zoom range
                 radii_mask = (heatmap_data['radii'] >= y_min) & (heatmap_data['radii'] <= y_max)
@@ -4015,10 +4013,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 max_angle = heatmap_data['angles'][max_angle_idx]
                 max_intensity = masked_z_data[max_intensity_idx]
                 
-                print(f"Find Max search limited to auto-zoom region:")
-                print(f"  - Auto-zoom range: {y_min:.1f} - {y_max:.1f} px")
+                print(f"Find Max search limited to zoomed region:")
+                print(f"  - Zoom range: {y_min:.1f} - {y_max:.1f} px")
                 print(f"  - Searched {len(valid_radius_indices)} of {len(heatmap_data['radii'])} radii")
-                print(f"  - Search covers {len(valid_radius_indices)/len(heatmap_data['radii'])*100:.1f}% of total data")
                 
                 print(f"Heatmap maximum found:")
                 print(f"  - Radius: {max_radius:.1f} px")
