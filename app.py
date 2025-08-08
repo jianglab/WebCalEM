@@ -1490,6 +1490,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             binned_image_data.set(None)
             image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
             cached_fft_image.set(None)
+            fft_widget.set(None)  # Clear FFT widget
 
             
             # Clear all overlay storage when upload fails
@@ -1552,6 +1553,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Reset FFT trigger and clear cached FFT images (but keep table data)
             fft_trigger.set(0)
             cached_fft_image.set(None)
+            fft_widget.set(None)  # Clear FFT widget to prevent appending to previous widget
             drawn_shapes.set([])
             
             # Clear FFT calculation state when a new image is loaded
@@ -1672,6 +1674,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
             fft_trigger.set(0)
             cached_fft_image.set(None)
+            fft_widget.set(None)  # Clear FFT widget to prevent appending to previous widget
             drawn_shapes.set([])
             
             fft_calculation_state.set({
@@ -1847,8 +1850,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 mode='immediate'
             ),
             modebar=dict(
-                add=['select2d', 'zoom', 'pan', 'reset+autorange'],
-                remove=['drawrect','lasso2d', 'eraseshape']
+                add=['select2d', 'lasso2d', 'zoom', 'pan', 'reset+autorange'],
+                remove=['drawrect', 'eraseshape']
             ),
             # Ensure selection events are captured
             uirevision='box_selection',
@@ -4082,7 +4085,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                             print(f"Heatmap Gaussian fitting failed: {fit_error}")
                     else:
                         print("Heatmap super resolution: Not enough points for Gaussian fitting")
-                
         except Exception as e:
             print(f"Error analyzing heatmap: {e}")
             import traceback
