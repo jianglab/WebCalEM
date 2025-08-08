@@ -6,6 +6,9 @@ import pandas as pd
 import tempfile
 from pathlib import Path
 import math
+import requests
+import os
+from urllib.parse import urlparse
 import plotly.graph_objects as go
 from plotly.graph_objects import FigureWidget
 from compute import (
@@ -22,6 +25,7 @@ from compute import (
     calculate_tilt_angle,
     get_resolution_info,
     compute_fft_1d_data,
+    compute_fft_polar_heatmap_data,
     resolution_to_radius,
     create_fft_1d_plotly_figure,
     get_image,
@@ -55,7 +59,7 @@ Usage:
 The tool will display:
 - Original image with selected region
 - FFT with resolution circles
-- 1D radial average plot
+- 1D radial plot
 - Calculated pixel size (Angstroms/pixel)
 """
 import argparse
@@ -98,36 +102,65 @@ Output:
     
 app_ui = ui.page_sidebar(
     ui.sidebar(
-        ui.input_file("upload", "Upload an image of test specimens (e.g., graphene)(.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"]),
+        # Input method selection
         ui.div(
-            {"style": "padding: 10px; background-color: #f8f9fa; border-radius: 5px; margin-bottom: 10px;"},
-            ui.input_text("nominal_apix", "Nominal Apix (Å/px)", value="1.00", width="120px"),
+            {"style": "margin-bottom: 0px;"},
+            ui.input_radio_buttons(
+                "input_method",
+                "Input Method:",
+                choices=["URL", "Upload"],
+                selected="URL",
+                inline=True
+            )
+        ),
+        # Conditional input based on selection
+        ui.panel_conditional(
+            "input.input_method === 'URL'",
+            ui.input_text(
+            "download_url",
+            "Download URL:",
+            value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff",
+            placeholder="Enter image URL (e.g., https://example.com/image.png)",
+            width="100%"
+            )
+        ),
+        
+        ui.panel_conditional(
+            "input.input_method === 'Upload'",
+            ui.input_file("upload", "Upload an image of test specimens (e.g., graphene)(.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"])
+        ),
+        ui.div(
+            {"style": "display: flex; justify-content: flex-start; align-items: top; gap: 5px; margin-top: 0px; width: 100%;"},
+
+            #{"style": "padding: 5px; background-color: #f8f9fa; border-radius: 5px; margin-bottom: 1px; display: flex; align-items: center; gap: 8px;"},
+            ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0;"}),
+            ui.input_text("nominal_apix", None, value="1.00", width="120px"),
         ),
         ui.input_select("resolution_type", "Resolution Type", 
-                      choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
-                      selected="Graphene (2.13 Å)"),
+                  choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
+                  selected="Graphene (2.13 Å)"),
         ui.panel_conditional(
             "input.resolution_type == 'Custom'",
             ui.div(
-                {"style": "display: flex; align-items: center;"},
-                ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="80px"),
+            {"style": "display: flex; align-items: center;"},
+            ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="80px"),
             ),
         ),
         ui.input_select("label_mode", "Label", 
-                      choices=["Resolution Ring", "Lattice Point"], 
-                      selected="Resolution Ring"),
+                  choices=["Resolution Ring", "Lattice Point"], 
+                  selected="Resolution Ring"),
         ui.div(
             {"style": "padding: 10px; background-color: #f8f9fa; border-radius: 5px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px;"},
             ui.div(
-                {"style": "flex: 1;"},
-                ui.input_slider("apix_slider", "Apix (Å/px)", min=0.01, max=2.0, value=1.0, step=0.001),
+            {"style": "flex: 1;"},
+            ui.input_slider("apix_slider", "Apix (Å/px)", min=0.01, max=2.0, value=1.0, step=0.001),
             ),
-                    ui.div(
+            ui.div(
             {"style": "display: flex; justify-content: flex-start; align-items: bottom; gap: 5px; margin-top: 5px; width: 100%;"},
             ui.input_text("apix_exact_str", None, value="1.0", width="70px"),
             ui.input_action_button("apix_set_btn", ui.tags.span("Set", style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"), class_="btn-primary", style="height: 38px; display: flex; align-items: center;", width="50px"),
             ui.input_action_button("add_to_table", ui.tags.span("Add to Table", style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"), class_="btn-success", style="height: 38px; display: flex; align-items: center;"),
-        ),
+            ),
         ),
 
         # ui.div(
@@ -197,13 +230,26 @@ app_ui = ui.page_sidebar(
             full_screen=True,
         ),
         ui.card(
-            ui.card_header("1D FFT Radial Profile"),
-
+            ui.card_header("FFT Radial Profile"),
             ui.div(
-                {"style": "display: flex;"},
-                output_widget("fft_1d_plot"),
+                {"style": "display: grid; grid-template-columns: 800px 200px; gap: 20px; align-items: center;"},
+                # Left side: Both plots stacked with fixed width
                 ui.div(
-                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; margin-left: 10px; width: 200px;"},
+                    {"style": "width: 800px;"},
+                    # Heatmap
+                    ui.div(
+                        {"style": "margin-bottom: 20px; width: 800px;"},
+                        output_widget("fft_polar_heatmap")
+                    ),
+                    # 1D plot
+                    ui.div(
+                        {"style": "width: 800px;"},
+                        output_widget("fft_1d_plot")
+                    )
+                ),
+                # Right side: Controls in fixed grid column
+                ui.div(
+                    {"style": "display: flex; flex-direction: column; justify-content: center; width: 100%;"},
                     ui.input_checkbox("log_y", "Log Scale", value=False),
                     ui.input_checkbox("use_mean_profile", "Use Average Profile", value=False),
                     ui.input_checkbox("smooth", "Smooth Signal", value=False),
@@ -224,7 +270,7 @@ app_ui = ui.page_sidebar(
                         ),
                     ),
                     ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
-                ),
+                )
             ),
             ui.div(
                 {"class": "card-footer", "style": "justify-content: flex-start;"},
@@ -518,6 +564,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         'x_range': None,
         'y_range': None
     })
+    
+    # Shared x-axis range for heatmap and 1D profile
+    shared_x_range = reactive.Value(None)
+    
+    # Track which plot triggered the range change to avoid loops
+    range_update_source = reactive.Value(None)
 
     # Add reactive values for raw data and region
     raw_image_data = reactive.Value({
@@ -550,6 +602,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     # Add reactive value to store the FFT FigureWidget for in-place overlay updates
     fft_widget = reactive.Value(None)
+    
+    # Add reactive value to store the polar heatmap FigureWidget
+    fft_heatmap_widget = reactive.Value(None)
     
     # Add reactive value to store all drawn shapes
     drawn_shapes = reactive.Value([])
@@ -812,6 +867,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             tilt_info_red_storage.set(None)
             tuned_markers_storage.set([])
             tuned_resolution_radius.set(None)
+            
             
             # Reset FFT state to clear drawn circles and measurements
             fft_state.set({
@@ -1477,10 +1533,13 @@ def server(input: Inputs, output: Outputs, session: Session):
             original_filename = file_info[0]["name"]
             #print(f"Original filename: {original_filename}")
             
-            # Extract nominal apix from filename and update the textbox
+            # Extract nominal apix from filename and update the textbox and slider
             nominal_value = extract_nominal(original_filename)
             ui.update_text("nominal_apix", value=f"{nominal_value:.2f}", session=session)
+            ui.update_slider("apix_slider", value=nominal_value, session=session)
+            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
+            print(f"Set apix slider and exact value to match nominal apix: {nominal_value:.3f}")
             
             # Set the binned data for display (always 1000x1000)
             image_data.set(binned_data)
@@ -1548,6 +1607,157 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_filename.set(None)
             original_image_data.set(None)
             binned_image_data.set(None)
+
+    # Helper function for URL downloading logic
+    def download_image_from_url(url):
+        """Download and process image from URL."""
+        if not url or not url.strip():
+            return False
+            
+        url = url.strip()
+        print(f"Attempting to download image from URL: {url}")
+        
+        try:
+            # Download the image
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Get file extension from URL or content-type
+            parsed_url = urlparse(url)
+            url_path = parsed_url.path
+            if '.' in url_path:
+                file_ext = os.path.splitext(url_path)[1].lower()
+            else:
+                # Try to determine from content-type
+                content_type = response.headers.get('content-type', '').lower()
+                if 'png' in content_type:
+                    file_ext = '.png'
+                elif 'jpeg' in content_type or 'jpg' in content_type:
+                    file_ext = '.jpg'
+                elif 'tiff' in content_type or 'tif' in content_type:
+                    file_ext = '.tif'
+                else:
+                    file_ext = '.png'  # Default
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+                tmp_file.write(response.content)
+                temp_path = tmp_file.name
+            
+            # Load image using the same logic as file upload
+            print(f"Loading downloaded image from: {temp_path}")
+            original_data, target_apix, original_apix = get_image(temp_path)
+            print(f"Image loaded successfully: original_shape={original_data.shape}, apix={target_apix}")
+            
+            # Create binned version for display
+            binned_data = bin_image(original_data, target_size=1000)
+            print(f"Created binned version for display: binned_shape={binned_data.shape}")
+            
+            # Extract filename from URL
+            original_filename = os.path.basename(parsed_url.path) or "downloaded_image" + file_ext
+            
+            # Extract nominal apix from filename and update UI
+            nominal_value = extract_nominal(original_filename)
+            ui.update_text("nominal_apix", value=f"{nominal_value:.2f}", session=session)
+            ui.update_slider("apix_slider", value=nominal_value, session=session)
+            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
+            print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
+            
+            # Set the image data (same as upload handler)
+            image_data.set(binned_data)
+            image_apix.set(target_apix)
+            image_filename.set(original_filename)
+            
+            # Store original and binned data separately
+            original_image_data.set(original_data)
+            binned_image_data.set(binned_data)
+            
+            # Reset all states (same as upload handler)
+            image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
+            fft_trigger.set(0)
+            cached_fft_image.set(None)
+            drawn_shapes.set([])
+            
+            fft_calculation_state.set({
+                'region': None,
+                'apix': None,
+                'resolution_type': None,
+                'custom_resolution': None
+            })
+            
+            # Clear all overlay storage
+            lattice_points_storage.set([])
+            ellipse_params_storage.set(None)
+            tilt_info_storage.set(None)
+            tilt_info_green_storage.set(None)
+            tilt_info_red_storage.set(None)
+            tuned_markers_storage.set([])
+            tuned_resolution_radius.set(None)
+            fft_state.set({
+                'mode': 'Resolution Ring',
+                'resolution_radius': None,
+                'resolution_click_x': None,
+                'resolution_click_y': None,
+                'lattice_points': [],
+                'ellipse_params': None,
+                'tilt_info': None,
+                'zoom_factor': 1.0,
+                'drawn_circles': [],
+                'current_measurement': None
+            })
+            
+            # Set image data for display
+            img = Image.fromarray(binned_data.astype(np.uint8))
+            raw_image_data.set({
+                'img': img,
+                'data': binned_data
+            })
+            
+            print(f"Successfully loaded image from URL: {original_filename}")
+            
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except Exception as cleanup_error:
+                print(f"Warning: Could not delete temporary file: {cleanup_error}")
+            
+            return True
+                
+        except Exception as e:
+            print(f"Error downloading image from URL: {e}")
+            import traceback
+            traceback.print_exc()
+            # Clear image data on error
+            raw_image_data.set({'img': None, 'data': None})
+            image_data.set(None)
+            image_filename.set(None)
+            original_image_data.set(None)
+            binned_image_data.set(None)
+            return False
+
+    @reactive.Effect
+    @reactive.event(input.download_url)
+    def _():
+        """Handle URL download when download_url changes."""
+        # Only download if URL mode is selected
+        if input.input_method() != "URL":
+            return
+            
+        url = input.download_url()
+        download_image_from_url(url)
+    
+    @reactive.Effect
+    def _():
+        """Auto-download preset URL on app startup when URL mode is selected."""
+        # This effect runs when the app starts and input_method is available
+        try:
+            if input.input_method() == "URL":
+                url = input.download_url()
+                if url:  # Only download if URL is not empty
+                    print("Auto-downloading preset URL on app startup...")
+                    download_image_from_url(url)
+        except Exception as e:
+            print(f"Auto-download on startup failed: {e}")
 
     @reactive.Effect
     @reactive.event(fft_trigger)
@@ -1638,7 +1848,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Configure selection behavior
             selectdirection='any',
             newselection=dict(
-                mode='immediate'
+                mode='immediate',
+                line=dict(
+                    color='red',
+                    width=3,
+                    dash='solid'
+                )
             ),
             modebar=dict(
                 add=['select2d', 'lasso2d', 'zoom', 'pan', 'reset+autorange'],
@@ -2475,24 +2690,201 @@ def server(input: Inputs, output: Outputs, session: Session):
         zoom = plot_zoom.get()  # Keep zoom state for interactive zoom/pan
         resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
         
+        # Get shared x-axis range
+        shared_range = shared_x_range.get()
+        
         # Create plotly figure using the original data (no filtering)
         fig = create_fft_1d_plotly_figure(
             plot_data=plot_data,
             resolution=resolution,
             region=region,
             size=size,
-            zoom_state=zoom
+            zoom_state=zoom,
+            shared_x_range=shared_range
         )
         
         # Create FigureWidget from the Figure and return it
         fw = FigureWidget(fig)
         
+        # Add relayout callback to sync x-axis with heatmap
+        def on_1d_relayout(layout_data, fig):
+            if ('xaxis.range[0]' in layout_data and 'xaxis.range[1]' in layout_data and 
+                range_update_source.get() != '1d'):
+                new_range = [layout_data['xaxis.range[0]'], layout_data['xaxis.range[1]']]
+                range_update_source.set('1d')
+                shared_x_range.set(new_range)
+                range_update_source.set(None)
+        
+        fw.layout.on_change(on_1d_relayout, 'xaxis.range')
+        
         # Store the widget for in-place updates
         fft_1d_widget.set(fw)
         
         return fw
+    
+    @render_plotly("fft_polar_heatmap")
+    def fft_polar_heatmap():
+        # Check if FFT has been calculated
+        cached_fft = cached_fft_image.get()
+        if cached_fft is None:
+            return None
+        
+        # Get the stored FFT calculation state
+        calc_state = fft_calculation_state.get()
+        if calc_state['region'] is None:
+            return go.Figure()
+        
+        try:
+            # Always use nominal apix for heatmap to prevent re-rendering on slider changes
+            nominal_apix = float(input.nominal_apix())
+            range_apix = nominal_apix
+            
+            # Compute polar heatmap data using unbinned coordinates
+            heatmap_data = compute_fft_polar_heatmap_data(
+                region=calc_state['region'],
+                apix=range_apix,
+                resolution_type=calc_state['resolution_type'],
+                custom_resolution=calc_state['custom_resolution']
+            )
+            
+            # Apply log scale to heatmap data if enabled
+            z_data = heatmap_data['heatmap_data']
+            if input.log_y():
+                z_data = np.log1p(z_data)  # log1p is safe for positive values
+            
+            # Create custom hover text with apix calculations
+            region_size = calc_state['region'].size[0]
+            resolution = heatmap_data['resolution']
+            
+            hover_text = []
+            for i, angle in enumerate(heatmap_data['angles']):
+                row_text = []
+                for j, radius in enumerate(heatmap_data['radii']):
+                    # Calculate apix for this radius
+                    if radius > 0 and resolution > 0:
+                        apix_value = (radius * resolution) / region_size
+                        apix_str = f"{apix_value:.3f}"
+                    else:
+                        apix_str = "N/A"
+                    
+                    hover_info = f"Angle: {angle:.0f}°<br>Radius: {radius:.1f} px<br>Apix: {apix_str} Å/px"
+                    row_text.append(hover_info)
+                hover_text.append(row_text)
+            
+            # Create Plotly heatmap (swapped axes: angle on x, radius on y)
+            # Need to transpose data: original is (angles x radii), but Plotly expects (radii x angles) for x=angles, y=radii
+            fig = go.Figure(data=go.Heatmap(
+                z=z_data.T,  # Transpose: (angles x radii) -> (radii x angles)
+                x=heatmap_data['angles'],
+                y=heatmap_data['radii'],
+                colorscale='viridis',
+                hoverongaps=False,
+                hovertemplate='%{text}<extra></extra>',
+                text=[[hover_text[j][i] for j in range(len(hover_text))] for i in range(len(hover_text[0]))]  # Transpose hover text too
+            ))
+            
+            # Get shared x-axis range or use data range
+            shared_range = shared_x_range.get()
+            if shared_range is not None:
+                x_range = shared_range
+            else:
+                x_range = [heatmap_data['radii'][0], heatmap_data['radii'][-1]]
+            
+            # Calculate auto-zoom range (always use auto-zoom)
+            # Get resolution from resolution type or custom value
+            if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+                resolution_map = {
+                    "Graphene (2.13 Å)": 2.13,
+                    "Graphene (100)": 2.13,
+                    "Graphene (110)": 1.23,
+                    "Gold (2.355 Å)": 2.355,
+                    "Gold (111)": 2.35,
+                    "Gold (200)": 2.04,
+                    "Gold (220)": 1.44,
+                    "Ice (3.661 Å)": 3.661
+                }
+                target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+            else:
+                target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+            
+            # Get nominal apix and region size
+            nominal_apix = float(input.nominal_apix())
+            region_size = calc_state['region'].size[0]  # Unbinned region size
+            
+            # Calculate target radius in pixels using the same formula as resolution_to_radius
+            target_radius = (region_size * nominal_apix) / target_resolution
+            
+            # Set auto-zoom range: ±15 pixels around target radius
+            zoom_margin = 15
+            y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
+            y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
+            
+            # Create title with auto-zoom info
+            title = f'FFT Profile Near Frequency of Interest<br>Target: {target_radius:.1f} px ({target_resolution:.2f} Å @ {nominal_apix:.3f} Å/px)'
+            
+            fig.update_layout(
+                title=title,
+                xaxis_title='Angle (degrees)',
+                yaxis_title='Radius (pixels)',
+                height=400,
+                margin=dict(l=60, r=20, t=80, b=40),
+                xaxis=dict(
+                    range=[0, 360],  # Full angle range
+                    showgrid=True,
+                    showticklabels=True
+                ),
+                yaxis=dict(
+                    range=[y_min, y_max],  # Zoomed to ±15 around target
+                    showgrid=True,
+                    showticklabels=True
+                )
+            )
+            
+            # Check if we should add red circle overlay for Find Max
+            max_pos = heatmap_max_position.get()
+            if max_pos.get('show_overlay', False) and max_pos.get('radius') is not None:
+                # Add small red circle at max position (~1 pixel radius)
+                fig.add_shape(
+                    type="circle",
+                    x0=max_pos['angle'] - 2,  # 1-degree radius circle
+                    y0=max_pos['radius'] - 2,  # 1-pixel radius circle  
+                    x1=max_pos['angle'] + 2,
+                    y1=max_pos['radius'] + 2,
+                    line_color="red",
+                    line_width=2,
+                    fillcolor="rgba(255,0,0,0.3)"
+                )
+            
+            # Create FigureWidget
+            fw = FigureWidget(fig)
+            
+            return fw
+            
+        except Exception as e:
+            print(f"Error creating polar heatmap: {e}")
+            return go.Figure()
 
-
+    # Synchronize x-axis ranges between heatmap and 1D plot
+    @reactive.Effect
+    def sync_plot_ranges():
+        """Update plot ranges when shared x-range changes."""
+        shared_range = shared_x_range.get()
+        if shared_range is None:
+            return
+            
+        # Update 1D plot range
+        widget_1d = fft_1d_widget.get()
+        if widget_1d is not None and range_update_source.get() != '1d':
+            range_update_source.set('sync')
+            try:
+                widget_1d.layout.xaxis.range = shared_range
+            except Exception as e:
+                print(f"Error syncing 1D plot range: {e}")
+            finally:
+                range_update_source.set(None)
+                
+        # Note: Heatmap will update automatically through its render function
+        # which uses shared_x_range.get() in its layout
 
     # @output
     # @render.text
@@ -2686,6 +3078,13 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     # Add reactive value to store the Apix-centered plot FigureWidget for in-place updates
     apix_centered_widget = reactive.Value(None)
+    
+    # Store heatmap maximum position for overlay
+    heatmap_max_position = reactive.Value({
+        'radius': None,
+        'angle': None,
+        'show_overlay': False
+    })
 
     @output
     @render_widget
@@ -3539,6 +3938,158 @@ def server(input: Inputs, output: Outputs, session: Session):
                 print(f"Error adding vertical line: {e}")
                 import traceback
                 traceback.print_exc()
+                
+        # Also analyze the heatmap for maximum intensity
+        try:
+            # Get heatmap data
+            calc_state = fft_calculation_state.get()
+            if calc_state['region'] is not None:
+                # Check if we should use nominal apix (initial) or current apix (after slider changes)
+                nominal_apix = float(input.nominal_apix())
+                current_apix = get_apix()
+                
+                if abs(current_apix - nominal_apix) < 0.01:
+                    range_apix = nominal_apix
+                else:
+                    range_apix = current_apix
+                
+                heatmap_data = compute_fft_polar_heatmap_data(
+                    region=calc_state['region'],
+                    apix=range_apix,
+                    resolution_type=calc_state['resolution_type'],
+                    custom_resolution=calc_state['custom_resolution']
+                )
+                
+                z_data = heatmap_data['heatmap_data']
+                if input.log_y():
+                    z_data = np.log1p(z_data)
+                
+                # Calculate auto-zoom range (same as heatmap display)
+                # Get resolution and calculate target radius
+                if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+                    resolution_map = {
+                        "Graphene (2.13 Å)": 2.13,
+                        "Graphene (100)": 2.13,
+                        "Graphene (110)": 1.23,
+                        "Gold (2.355 Å)": 2.355,
+                        "Gold (111)": 2.35,
+                        "Gold (200)": 2.04,
+                        "Gold (220)": 1.44,
+                        "Ice (3.661 Å)": 3.661
+                    }
+                    target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+                else:
+                    target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+                
+                nominal_apix = float(input.nominal_apix())
+                region_size = calc_state['region'].size[0]
+                target_radius = (region_size * nominal_apix) / target_resolution
+                
+                # Define auto-zoom range: ±15 pixels around target radius
+                zoom_margin = 15
+                y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
+                y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
+                
+                print(f"Using auto-zoom range for Find Max: {y_min:.1f} - {y_max:.1f} px")
+                
+                # Filter radii indices to only search within zoom range
+                radii_mask = (heatmap_data['radii'] >= y_min) & (heatmap_data['radii'] <= y_max)
+                valid_radius_indices = np.where(radii_mask)[0]
+                
+                if len(valid_radius_indices) == 0:
+                    print("No radii in zoom range for Find Max search")
+                    return
+                
+                # Create masked data for search (only zoomed region)
+                # z_data has shape (angles x radii), we want to mask the radii dimension
+                masked_z_data = z_data[:, radii_mask]
+                
+                # Find maximum intensity in the masked (zoomed) region
+                max_intensity_idx = np.unravel_index(np.argmax(masked_z_data), masked_z_data.shape)
+                max_angle_idx, masked_radius_idx = max_intensity_idx
+                
+                # Convert masked radius index back to original radius index
+                max_radius_idx = valid_radius_indices[masked_radius_idx]
+                
+                max_radius = heatmap_data['radii'][max_radius_idx]
+                max_angle = heatmap_data['angles'][max_angle_idx]
+                max_intensity = masked_z_data[max_intensity_idx]
+                
+                print(f"Find Max search limited to auto-zoom region:")
+                print(f"  - Auto-zoom range: {y_min:.1f} - {y_max:.1f} px")
+                print(f"  - Searched {len(valid_radius_indices)} of {len(heatmap_data['radii'])} radii")
+                print(f"  - Search covers {len(valid_radius_indices)/len(heatmap_data['radii'])*100:.1f}% of total data")
+                
+                print(f"Heatmap maximum found:")
+                print(f"  - Radius: {max_radius:.1f} px")
+                print(f"  - Angle: {max_angle:.0f}°")
+                print(f"  - Intensity: {max_intensity:.3f}")
+                
+                # Add red circle overlay to heatmap at max position
+                try:
+                    # Get the heatmap widget (we need to access it through a stored reference)
+                    # Since we don't have a direct widget reference for the heatmap, 
+                    # we'll need to trigger a heatmap update that includes the overlay
+                    # Store the max position for the heatmap to use
+                    heatmap_max_position.set({
+                        'radius': max_radius,
+                        'angle': max_angle,
+                        'show_overlay': True
+                    })
+                    print(f"Added red circle overlay to heatmap at radius={max_radius:.1f}, angle={max_angle:.0f}°")
+                    
+                except Exception as overlay_error:
+                    print(f"Error adding heatmap overlay: {overlay_error}")
+                
+                # Super resolution analysis for heatmap if enabled
+                if input.super_resolution():
+                    # Extract the column (all radii) at the max angle, but limit to zoom region
+                    angle_row = z_data[max_angle_idx, radii_mask]  # Use masked data for consistency
+                    radii = heatmap_data['radii'][radii_mask]  # Use radii in zoom region
+                    
+                    # Find window around max radius
+                    gaussian_window = input.gaussian_window()
+                    radius_window_half = gaussian_window / 2.0
+                    
+                    # Create mask for radii within window
+                    radius_mask = np.abs(radii - max_radius) <= radius_window_half
+                    if np.sum(radius_mask) >= 5:  # Need at least 5 points
+                        fit_radii = radii[radius_mask]
+                        fit_intensities = angle_row[radius_mask]
+                        
+                        try:
+                            from scipy.optimize import curve_fit
+                            
+                            def gaussian(x, a, mu, sigma, c):
+                                return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                            
+                            # Initial guesses
+                            a_guess = max_intensity
+                            mu_guess = max_radius
+                            sigma_guess = radius_window_half / 3
+                            c_guess = np.min(fit_intensities)
+                            
+                            # Fit Gaussian
+                            popt, _ = curve_fit(gaussian, fit_radii, fit_intensities,
+                                              p0=[a_guess, mu_guess, sigma_guess, c_guess],
+                                              maxfev=1000)
+                            
+                            fitted_radius = popt[1]
+                            fitted_intensity = popt[0] + popt[3]  # peak + baseline
+                            
+                            print(f"Heatmap Gaussian fit (super resolution):")
+                            print(f"  - Fitted radius: {fitted_radius:.2f} px")
+                            print(f"  - Fitted intensity: {fitted_intensity:.3f}")
+                            
+                        except Exception as fit_error:
+                            print(f"Heatmap Gaussian fitting failed: {fit_error}")
+                    else:
+                        print("Heatmap super resolution: Not enough points for Gaussian fitting")
+                
+        except Exception as e:
+            print(f"Error analyzing heatmap: {e}")
+            import traceback
+            traceback.print_exc()
 
     @reactive.Effect
     @reactive.event(input.add_to_table)

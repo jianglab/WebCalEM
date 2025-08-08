@@ -476,7 +476,7 @@ def plot_image(image_data: np.ndarray, title: str, apix: float, plot_height: int
 
 
 def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Image.Image, 
-                               size: int, zoom_state: dict) -> 'plotly.graph_objects.Figure':
+                               size: int, zoom_state: dict, shared_x_range=None) -> 'plotly.graph_objects.Figure':
     """
     Create a Plotly figure for the 1D FFT radial profile.
     
@@ -500,16 +500,15 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
     hover_text = []
     
     for i, x_val in enumerate(plot_data['x_data']):
-        # Calculate apix using the radius and current resolution
+        # Calculate apix using the radius and current resolution (unbinned coordinates)
         if resolution is not None and x_val > 0:
-            # Convert from region coordinates to full FFT coordinates
             if region is not None:
-                region_size = region.size[0]
-                full_fft_size = size
-                fft_radius = x_val * (full_fft_size / region_size)
+                region_size = region.size[0]  # Unbinned region size
+                # x_val is in unbinned FFT pixel coordinates
+                fft_radius = x_val
                 
-                # Calculate apix using the same formula as other modes
-                apix_value = (fft_radius * resolution) / full_fft_size
+                # Calculate apix using the correct formula for unbinned coordinates
+                apix_value = (fft_radius * resolution) / region_size
                 apix_str = f"{apix_value:.3f}"
             else:
                 apix_str = "N/A"
@@ -530,12 +529,17 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
         text=hover_text
     ))
     
-    # Set axis limits based on zoom state or defaults
-    if zoom_state['x_range'] is not None and zoom_state['y_range'] is not None:
+    # Set axis limits based on shared range, zoom state, or defaults
+    if shared_x_range is not None:
+        xlim = shared_x_range
+    elif zoom_state['x_range'] is not None and zoom_state['y_range'] is not None:
         xlim = zoom_state['x_range']
         ylim = zoom_state['y_range']
     else:
         xlim = (plot_data['x_min'], plot_data['x_max'])
+        
+    # Set y limits if not already set
+    if 'ylim' not in locals():
         # Calculate y limits
         y_min = plot_data['y_data'].min()
         y_max = plot_data['y_data'].max()
@@ -556,7 +560,7 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
         title="1D FFT Radial Profile",
         xaxis_title="Radius (pixels)",
         yaxis_title=plot_data['y_axis_title'],
-        xaxis=dict(range=xlim, showgrid=True),
+        xaxis=dict(range=xlim, showgrid=True, matches='x'),  # Share x-axis with heatmap
         yaxis=dict(range=ylim, showgrid=True),
         showlegend=True,
         legend=dict(x=0.02, y=0.02, xanchor='left', yanchor='bottom'),
@@ -565,6 +569,96 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
         hovermode="x unified"
     )
     return fig
+
+
+def compute_fft_polar_heatmap_data(region: Image.Image, apix: float, resolution_type: str = None, 
+                                  custom_resolution: float = None, use_for_range: bool = True) -> dict:
+    """
+    Calculate polar heatmap data for FFT profile near radius of interest.
+    
+    Args:
+        region: Image region to analyze
+        apix: Pixel size in Å/pixel (used for radius range calculation)
+        resolution_type: Type of resolution for position calculation
+        custom_resolution: Custom resolution value
+        use_for_range: Whether to use this apix for range calculation (vs just returning info)
+        
+    Returns:
+        Dictionary containing polar heatmap data
+    """
+    # Compute FFT and get power spectrum
+    arr = np.array(region.convert("L")).astype(np.float32)
+    
+    # Validate array size
+    if arr.size == 0 or arr.shape[0] == 0 or arr.shape[1] == 0:
+        raise ValueError(f"Invalid region size for FFT: {arr.shape}")
+    
+    f = np.fft.fft2(arr)
+    fshift = np.fft.fftshift(f)
+    pwr = np.abs(fshift)
+    
+    cy, cx = np.array(pwr.shape) // 2
+    
+    # Get expected radius based on resolution
+    if resolution_type and resolution_type != "Custom":
+        resolution_map = {
+            "Graphene (100)": 2.13,
+            "Graphene (110)": 1.23,
+            "Gold (111)": 2.35,
+            "Gold (200)": 2.04,
+            "Gold (220)": 1.44
+        }
+        resolution = resolution_map.get(resolution_type, 2.13)
+    else:
+        resolution = custom_resolution if custom_resolution else 2.13
+    
+    # Calculate expected radius in pixels using unbinned coordinates
+    # Use the actual region size for accurate calculations
+    region_size = arr.shape[0]
+    expected_radius = resolution_to_radius(resolution, region_size, apix)
+    
+    # Match the 1D FFT range: 10% to 75% of total radius
+    total_radius = min(cy, cx)
+    r_min = max(1, int(total_radius * 0.1))  # Start from 10% of total radius  
+    r_max = int(total_radius * 0.75)  # End at 75% of total radius
+    
+    # Create angular and radial coordinates
+    angles = np.linspace(0, 360, 360, endpoint=False)  # 0-360 degrees
+    radii = np.arange(r_min, r_max + 1)
+    
+    # Create the heatmap data (angles x radii for correct axis orientation)
+    heatmap_data = np.zeros((len(angles), len(radii)))
+    
+    for i, angle in enumerate(angles):
+        for j, r in enumerate(radii):
+            # Convert polar to cartesian
+            theta = np.radians(angle)
+            x = cx + r * np.cos(theta)
+            y = cy + r * np.sin(theta)
+            
+            # Bilinear interpolation for sub-pixel accuracy
+            x0, x1 = int(np.floor(x)), int(np.ceil(x))
+            y0, y1 = int(np.floor(y)), int(np.ceil(y))
+            
+            # Check bounds
+            if (x0 >= 0 and x1 < pwr.shape[1] and y0 >= 0 and y1 < pwr.shape[0]):
+                # Bilinear interpolation weights
+                wx = x - x0
+                wy = y - y0
+                
+                # Interpolate
+                intensity = (1-wx)*(1-wy)*pwr[y0,x0] + wx*(1-wy)*pwr[y0,x1] + \
+                           (1-wx)*wy*pwr[y1,x0] + wx*wy*pwr[y1,x1]
+                
+                heatmap_data[i, j] = intensity
+    
+    return {
+        'heatmap_data': heatmap_data,
+        'angles': angles,
+        'radii': radii,
+        'expected_radius': expected_radius,
+        'resolution': resolution
+    }
 
 
 def compute_fft_1d_data(region: Image.Image, apix: float, use_mean_profile: bool = False, 
@@ -693,6 +787,7 @@ def compute_fft_1d_data(region: Image.Image, apix: float, use_mean_profile: bool
             if x_min <= radius_custom <= x_max:
                 resolution_positions['custom'] = radius_custom
 
+    # Use unbinned coordinates for accurate apix calculations
     return {
         'x_data': radius_pixels[mask],
         'y_data': y_data,
