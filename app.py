@@ -100,410 +100,404 @@ Output:
     """
     print(help_text)
     
+
+# Create the main UI using page_sidebar for proper Shiny styling
 app_ui = ui.page_sidebar(
     ui.sidebar(
-        # Input method selection
+        # App title and description in sidebar
+        ui.h1("Magnification Calibration", style="font-size: 24px; font-weight: bold; margin-bottom: 15px; color: #333;"),
+        ui.p("This tool helps calibrate electron microscopes by analyzing test specimen images.", 
+             style="font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.4;"),
+        # Add some basic help text
         ui.div(
-            {"style": "margin-bottom: 0px;"},
-            ui.input_radio_buttons(
-                "input_method",
-                "Input Method:",
-                choices=["URL", "Upload"],
-                selected="URL",
-                inline=True
-            )
-        ),
-        # Conditional input based on selection
-        ui.panel_conditional(
-            "input.input_method === 'URL'",
-            ui.input_text(
-            "download_url",
-            "Download URL:",
-            value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff",
-            placeholder="Enter image URL (e.g., https://example.com/image.png)",
-            width="100%"
-            )
-        ),
-        
-        ui.panel_conditional(
-            "input.input_method === 'Upload'",
-            ui.input_file("upload", "Upload an image of test specimens (e.g., graphene)(.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"])
-        ),
-        ui.div(
-            {"style": "display: flex; justify-content: flex-start; align-items: top; gap: 5px; margin-top: 0px; width: 100%;"},
-
-            #{"style": "padding: 5px; background-color: #f8f9fa; border-radius: 5px; margin-bottom: 1px; display: flex; align-items: center; gap: 8px;"},
-            ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0;"}),
-            ui.input_text("nominal_apix", None, value="1.00", width="120px"),
-        ),
-        ui.input_select("resolution_type", "Resolution Type", 
-                  choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
-                  selected="Graphene (2.13 Å)"),
-        ui.panel_conditional(
-            "input.resolution_type == 'Custom'",
-            ui.div(
-            {"style": "display: flex; align-items: center;"},
-            ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="80px"),
+            ui.h4("Quick Start:", style="font-size: 16px; font-weight: bold; margin-bottom: 10px;"),
+            ui.tags.ol(
+                ui.tags.li("Select input method (URL or Upload)"),
+                ui.tags.li("Choose region and calculate FFT"),
+                ui.tags.li("Analyze resolution patterns"),
+                style="font-size: 12px; line-height: 1.4; margin-left: 15px;"
             ),
+            style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;"
         ),
-        ui.input_select("label_mode", "Label", 
-                  choices=["Resolution Ring", "Lattice Point"], 
-                  selected="Resolution Ring"),
-        ui.div(
-            {"style": "padding: 10px; background-color: #f8f9fa; border-radius: 5px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 5px;"},
-            ui.div(
-            {"style": "flex: 1;"},
-            ui.input_slider("apix_slider", "Apix (Å/px)", min=0.01, max=2.0, value=1.0, step=0.001),
-            ),
-            ui.div(
-            {"style": "display: flex; justify-content: flex-start; align-items: bottom; gap: 5px; margin-top: 5px; width: 100%;"},
-            ui.input_text("apix_exact_str", None, value="1.0", width="70px"),
-            ui.input_action_button("apix_set_btn", ui.tags.span("Set", style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"), class_="btn-primary", style="height: 38px; display: flex; align-items: center;", width="50px"),
-            ui.input_action_button("add_to_table", ui.tags.span("Add to Table", style="display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;"), class_="btn-success", style="height: 38px; display: flex; align-items: center;"),
-            ),
-        ),
-
-        # ui.div(
-        #     {"style": "display: none;"},  # Hidden div for data persistence
-        #     ui.output_text("lattice_points_data"),
-        # ),
-        # ui.div(
-        #     {"style": "display: none;"},  # Hidden div for lattice points count
-        #     ui.output_text("lattice_points_count"),
-        # ),
-        
-        # FFT Analysis Controls
-        #ui.h3("FFT Analysis Controls", style="margin-top: 20px; margin-bottom: 10px;"),
-        #ui.output_text("tilt_output"),
-        
-        title=ui.h2("Magnification Calibration", style="font-size: 36px; font-weight: bold; padding: 15px;"),
-        open="open",
-        width="400px",
-        min_width="250px",
-        max_width="500px",
-        resize=True,
+        open="closed"
     ),
-    ui.layout_columns(
-        ui.card(
-            ui.card_header("Original Image"),
-            output_widget("image_display"),
-            ui.div(
-                {"style": "display: flex; gap: 10px; padding: 10px; justify-content: center;"},
-                ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
-                ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
-            ),
-            # ui.div(
-            #     {"class": "card-footer"},
-            #     "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
-            # ),
-            full_screen=True,
-        ),
-        ui.card(
-            ui.card_header("FFT Spectrum"),
-            output_widget("fft_with_circle"),
-            ui.div(
-                {"style": "display: flex; flex-direction: column; gap: 5px; padding: 8px; justify-content: center; height: 20%; min-height: 80px;"},
-                ui.div(
-                    {"style": "display: flex; gap: 15px; align-items: center;"},
-                    ui.div(
-                        {"style": "flex: 1;"},
-                        ui.input_slider("contrast", "FFT Range (±σ)", min=0.1, max=5.0, value=1.0, step=0.1),
-                    ),
-                    ui.div(
-                        {"style": "flex: 1; font-size: 12px; color: #666; padding-left: 10px;"},
-                        ui.output_text("tilt_output"),
-                    ),
-                ),
-                ui.div(
-                    {"style": "display: flex; gap: 8px; justify-content: center;"},
-                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
-                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
-                    #ui.input_action_button("clear_measurement", "Clear Measurement", class_="btn-secondary"),
-                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
-                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="padding: 4px 8px; min-width: auto; white-space: nowrap;"),
-                ),
-            ),
-            # ui.div(
-            #     {"class": "card-footer"},
-            #     "Click to mark points or draw circles.",
-            # ),
-            full_screen=True,
-        ),
-        ui.card(
-            ui.card_header("FFT Radial Profile"),
-            ui.div(
-                {"style": "display: grid; grid-template-columns: 800px 200px; gap: 20px; align-items: center;"},
-                # Left side: Both plots stacked with fixed width
-                ui.div(
-                    {"style": "width: 800px;"},
-                    # Heatmap
-                    ui.div(
-                        {"style": "margin-bottom: 20px; width: 800px;"},
-                        output_widget("fft_polar_heatmap")
-                    ),
-                    # 1D plot
-                    ui.div(
-                        {"style": "width: 800px;"},
-                        output_widget("fft_1d_plot")
-                    )
-                ),
-                # Right side: Controls in fixed grid column
-                ui.div(
-                    {"style": "display: flex; flex-direction: column; justify-content: center; width: 100%;"},
-                    ui.input_checkbox("log_y", "Log Scale", value=False),
-                    ui.input_checkbox("use_mean_profile", "Use Average Profile", value=False),
-                    ui.input_checkbox("smooth", "Smooth Signal", value=False),
-                    ui.input_checkbox("detrend", "Detrend Signal", value=False),
-                    ui.div(
-                        {"style": "margin-bottom: 10px;"},
-                        ui.panel_conditional(
-                            "input.smooth",
-                            ui.input_slider("window_size", "Window Size", min=1, max=11, value=3, step=2),
-                        ),
-                    ),
-                    ui.div(
-                        {"style": "margin-bottom: 10px;"},
-                        ui.input_checkbox("super_resolution", "Super Resolution", value=True),
-                        ui.panel_conditional(
-                            "input.super_resolution",
-                            ui.input_slider("gaussian_window", "Gaussian Window (pixels)", min=1, max=21, value=5, step=2),
-                        ),
-                    ),
-                    ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
-                )
-            ),
-            ui.div(
-                {"class": "card-footer", "style": "justify-content: flex-start;"},
-                "Radial Max of the 2D FFT. Drag to zoom, double-click to reset."
-            ),
-            full_screen=True,
-        ),
-        col_widths=[6, 6, 12],
-    ),
-    ui.card(
-        ui.card_header("Region Analysis Table"),
-        # Use row layout: table+buttons on left (55%), plot on right (45%), both full height
-        ui.layout_columns(
-            # Left column: Table and controls (55% width, 100% height)
-            ui.div(
-                {"style": "display: flex; flex-direction: column; height: 500px;"},
-                ui.div(
-                    {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
-                    ui.output_data_frame("region_table"),
-                ),
-                ui.div(
-                    {"style": "flex-shrink: 0; display: flex; gap: 10px; padding: 10px; justify-content: center; align-items: center; flex-wrap: wrap; border-top: 1px solid #dee2e6;"},
-                    ui.div(
-                        {"style": "display: flex; gap: 5px; align-items: center;"},
-                        ui.input_action_button("random_generate", "Random Generate", class_="btn-info"),
-                        ui.div(
-                            {"style": "display: flex; flex-direction: column; align-items: center;"},
-                            ui.div(
-                                {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
-                                "Count"
-                            ),
-                            ui.input_numeric("random_count", None, value=5, min=1, max=100, step=1, width="70px"),
-                        ),
-                        ui.div(
-                            {"style": "display: flex; flex-direction: column; align-items: center;"},
-                            ui.div(
-                                {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
-                                "Size %"
-                            ),
-                            ui.input_numeric("region_size_percent", None, value=0.2, min=0.1, max=1.0, step=0.1, width="70px"),
-                        ),
-                    ),
-                    ui.input_action_button("delete_selected", "Delete Selected", class_="btn-danger"),
-                    ui.input_action_button("clear_table", "Clear Table", class_="btn-secondary"),
-                    ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
-                ),
-            ),
-            # Right column: Plot (45% width, 100% height)
-            ui.div(
-                {"style": "height: 500px; padding: 10px; display: flex; flex-direction: column;"},
-                ui.div(
-                    {"style": "flex: 1; min-height: 0;"},
-                    output_widget("apix_centered_by_nominal_plot"),
-                ),
-            ),
-            col_widths=[7, 5],  # 58.3%/41.7% split (closest to 55%/45% with integer grid)
-        ),
-        ui.div(
-            {"class": "card-footer"},
-            "Table tracks all analyzed regions with their calibrated pixel sizes. Use Random Generate (count, size%) to analyze random regions from the current image, or manually select/delete rows.",
-        ),
-        full_screen=True,
-    ),
-
-    fillable=True,
-)
-# Add custom CSS for layout
-app_ui = ui.tags.div(
-    ui.tags.style("""
-        /* Image container styles */
-        .image-output {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: auto;
-            padding: 10px;
-            margin-bottom: 10px;
-            width: 100%;
-            min-height: 300px;
-            flex: 1;
-            /* Ensure scrollbars are always visible and not hidden */
-            scrollbar-width: auto;
-            scrollbar-color: rgba(0, 0, 0, 0.3) transparent;
-        }
-        .image-output::-webkit-scrollbar {
-            width: 12px;
-            height: 12px;
-        }
-        .image-output::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .image-output::-webkit-scrollbar-thumb {
-            background-color: rgba(0, 0, 0, 0.3);
-            border-radius: 6px;
-            border: 2px solid transparent;
-        }
-        .image-output img {
-            height: auto;
-            width: auto;
-            max-width: none;
-            max-height: none;
-            /* Add margin to ensure scrollbar is not covered */
-            margin-bottom: 12px;
-        }
-        /* Footer styles */
-        .card-footer {
-            height: 40px;
-            padding: 8px;
-            background-color: rgba(0, 0, 0, 0.03);
-            border-top: 1px solid rgba(0, 0, 0, 0.125);
-            display: flex;
-            align-items: center;
-            flex-shrink: 0;
-            margin-top: 0;
-            width: 100%;
-        }
-        .sidebar > h2, 
-        .sidebar-title,
-        .shiny-sidebar-title {
-            font-size: 36px !important;
-            font-weight: bold !important;
-            padding: 15px !important;
-        }
-        
-        /* Make Plotly widgets fill their containers */
-        .js-plotly-plot {
-            height: 100% !important;
-            width: 100% !important;
-        }
-        
-        /* Ensure cards with Plotly widgets use full height */
-        .card .output_widget {
-            height: 100%;
-            min-height: 400px;
-        }
-        
-        /* Ensure 2x2 grid layout cards have consistent heights */
-        .layout-columns > .card {
-            min-height: 500px;
-            height: auto;
-        }
-        
-        /* Style for the data table container */
-        .data-table-container {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #dee2e6;
-            border-radius: 0.375rem;
-        }
-        
-        /* Data table styling */
-        .data-table-container table {
-            width: 100%;
-            font-size: 0.875rem;
-        }
-        
-        .data-table-container th {
-            background-color: #f8f9fa;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        
-        /* Responsive adjustments for 2x2 grid */
-        @media (max-width: 1200px) {
-            .layout-columns > .card {
+    # Add custom CSS for enhanced styling
+    ui.tags.head(
+        ui.tags.style("""
+            /* Image container styles */
+            .image-output {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: auto;
+                padding: 10px;
+                margin-bottom: 10px;
+                width: 100%;
+                min-height: 300px;
+                flex: 1;
+                scrollbar-width: auto;
+                scrollbar-color: rgba(0, 0, 0, 0.3) transparent;
+            }
+            .image-output::-webkit-scrollbar {
+                width: 12px;
+                height: 12px;
+            }
+            .image-output::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .image-output::-webkit-scrollbar-thumb {
+                background-color: rgba(0, 0, 0, 0.3);
+                border-radius: 6px;
+                border: 2px solid transparent;
+            }
+            .image-output img {
+                height: auto;
+                width: auto;
+                max-width: none;
+                max-height: none;
+                margin-bottom: 12px;
+            }
+            /* Footer styles */
+            .card-footer {
+                height: 40px;
+                padding: 8px;
+                background-color: rgba(0, 0, 0, 0.03);
+                border-top: 1px solid rgba(0, 0, 0, 0.125);
+                display: flex;
+                align-items: center;
+                flex-shrink: 0;
+                margin-top: 0;
+                width: 100%;
+            }
+            /* Make Plotly widgets fill their containers */
+            .js-plotly-plot {
+                height: 100% !important;
+                width: 100% !important;
+            }
+            /* Ensure cards with Plotly widgets use full height */
+            .card .output_widget {
+                height: 100%;
                 min-height: 400px;
             }
-        }
-        
-        @media (max-width: 768px) {
+            /* Ensure 2x2 grid layout cards have consistent heights */
             .layout-columns > .card {
-                min-height: 300px;
+                min-height: 500px;
+                height: auto;
             }
-        }
-
-    """),
-    ui.tags.script("""
-        // Custom JavaScript to ensure only one shape at a time for image display
-        document.addEventListener('DOMContentLoaded', function() {
-            // Function to clear all shapes except the latest one (only for image display)
-            function clearPreviousShapes() {
-                const plots = document.querySelectorAll('.js-plotly-plot');
-                plots.forEach(plot => {
-                    // Only clear shapes for image display (not FFT display)
-                    // Check if this is the image display plot by looking for specific characteristics
-                    if (plot.layout && plot.layout.shapes && plot.layout.shapes.length > 1) {
-                        // Check if this is likely the image display (has drawrect mode)
-                        const isImageDisplay = plot.layout.dragmode === 'drawrect' || 
-                                             plot.layout.modebar && plot.layout.modebar.add && 
-                                             plot.layout.modebar.add.includes('drawrect');
-                        
-                        if (isImageDisplay) {
-                            // Keep only the last shape for image display
-                            const lastShape = plot.layout.shapes[plot.layout.shapes.length - 1];
-                            plot.layout.shapes = [lastShape];
-                            Plotly.relayout(plot, {shapes: [lastShape]});
-                        }
-                        // Don't clear shapes for FFT display - allow multiple circles
-                    }
-                });
+            /* Style for the data table container */
+            .data-table-container {
+                max-height: 400px;
+                overflow-y: auto;
+                border: 1px solid #dee2e6;
+                border-radius: 0.375rem;
             }
-            
-            // Listen for shape drawing events using MutationObserver
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'childList') {
-                        const plots = document.querySelectorAll('.js-plotly-plot');
-                        plots.forEach(plot => {
-                            if (plot.layout && plot.layout.shapes && plot.layout.shapes.length > 1) {
-                                setTimeout(clearPreviousShapes, 50);
+            .data-table-container table {
+                width: 100%;
+                font-size: 0.875rem;
+            }
+            .data-table-container th {
+                background-color: #f8f9fa;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+            }
+        """),
+        ui.tags.script("""
+            // Custom JavaScript to ensure only one shape at a time for image display
+            document.addEventListener('DOMContentLoaded', function() {
+                // Function to clear all shapes except the latest one (only for image display)
+                function clearPreviousShapes() {
+                    const plots = document.querySelectorAll('.js-plotly-plot');
+                    plots.forEach(plot => {
+                        // Only clear shapes for image display (not FFT display)
+                        // Check if this is the image display plot by looking for specific characteristics
+                        if (plot.layout && plot.layout.shapes && plot.layout.shapes.length > 1) {
+                            // Check if this is likely the image display (has drawrect mode)
+                            const isImageDisplay = plot.layout.dragmode === 'drawrect' || 
+                                                 plot.layout.modebar && plot.layout.modebar.add && 
+                                                 plot.layout.modebar.add.includes('drawrect');
+                            
+                            if (isImageDisplay) {
+                                // Keep only the last shape for image display
+                                const lastShape = plot.layout.shapes[plot.layout.shapes.length - 1];
+                                plot.layout.shapes = [lastShape];
+                                Plotly.relayout(plot, {shapes: [lastShape]});
                             }
-                        });
+                            // Don't clear shapes for FFT display - allow multiple circles
+                        }
+                    });
+                }
+                
+                // Listen for shape drawing events using MutationObserver
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList') {
+                            const plots = document.querySelectorAll('.js-plotly-plot');
+                            plots.forEach(plot => {
+                                if (plot.layout && plot.layout.shapes && plot.layout.shapes.length > 1) {
+                                    setTimeout(clearPreviousShapes, 50);
+                                }
+                            });
+                        }
+                    });
+                });
+                
+                // Start observing
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+                
+                // Also listen for click events on plots
+                document.addEventListener('click', function(e) {
+                    if (e.target.closest('.js-plotly-plot')) {
+                        setTimeout(clearPreviousShapes, 100);
                     }
                 });
             });
-            
-            // Start observing
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-            
-            // Also listen for click events on plots
-            document.addEventListener('click', function(e) {
-                if (e.target.closest('.js-plotly-plot')) {
-                    setTimeout(clearPreviousShapes, 100);
-                }
-            });
-        });
-    """),
-    app_ui
-)
+        """)
+    ),
+    # Primary analysis section - always visible
+    ui.div(
+        {"style": "margin-bottom: 20px;"},
+        ui.layout_columns(
+            ui.layout_sidebar(
+                ui.sidebar(
+                    # Input method selection
+                    ui.div(
+                        {"style": "margin-bottom: 10px;"},
+                        ui.input_radio_buttons(
+                            "input_method",
+                            "Input Method:",
+                            choices=["URL", "Upload"],
+                            selected="URL",
+                            inline=True
+                        )
+                    ),
+                    # Conditional input based on selection
+                    ui.panel_conditional(
+                        "input.input_method === 'URL'",
+                        ui.input_text(
+                            "download_url",
+                            "Download URL:",
+                            value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff",
+                            placeholder="Enter image URL",
+                            width="100%"
+                        )
+                    ),
+                    ui.panel_conditional(
+                        "input.input_method === 'Upload'",
+                        ui.input_file("upload", "Upload image (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"])
+                    ),
+                    ui.div(
+                        {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 5px; margin-top: 10px; width: 100%;"},
+                        ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0; font-size: 12px;"}),
+                        ui.input_text("nominal_apix", None, value="1.00", width="80px"),
+                    ),
+                    ui.input_select("resolution_type", "Resolution Type", 
+                        choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
+                        selected="Graphene (2.13 Å)"),
+                    ui.panel_conditional(
+                        "input.resolution_type == 'Custom'",
+                        ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="120px"),
+                    ),
+                    width="300px",
+                    open="closed"
+                ),
+                ui.card(
+                    ui.card_header("Original Image"),
+                    output_widget("image_display"),
+                    ui.div(
+                        {"style": "display: flex; gap: 10px; padding: 10px; justify-content: center;"},
+                        ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
+                        ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
+                    ),
+                    full_screen=True,
+                ),
+            ),
+            # Right column: FFT and Result cards stacked vertically
+            ui.div(
+                {"style": "display: flex; flex-direction: column; gap: 15px; height: 100%;"},
+                ui.card(
+                    ui.card_header("FFT Analysis"),
+                    ui.navset_tab(
+                        ui.nav_panel(
+                            "2D Spectrum",
+                            ui.div(
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 15px;"},
+                                # Left side: FFT display
+                                ui.div(
+                                    {"style": "width: 100%; height: 100%;"},
+                                    output_widget("fft_with_circle")
+                                ),
+                                # Right side: Controls arranged with fixed positioning
+                                ui.div(
+                                    {"style": "position: relative; background-color: #f8f9fa; border-radius: 8px; height: 450px; width: 250px; flex-shrink: 1; overflow: hidden;"},
+                                    # Label Type dropdown - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 10px; left: 10px; right: 10px;"},
+                                        ui.input_select("label_mode", "", 
+                                            choices=["Resolution Ring", "Lattice Point"], 
+                                            selected="Resolution Ring")
+                                    ),
+                                    # FFT Range slider - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 57px; left: 10px; right: 10px;"},
+                                        ui.input_slider("contrast", "FFT Range (±σ)", min=0.1, max=5.0, value=1.0, step=0.1),
+                                    ),
+
+                                    # Buttons with fixed positions - well spaced
+                                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
+                                    # Tilt output - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 340px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
+                                        ui.output_text("tilt_output"),
+                                    ),
+                                )
+                            )
+                        ),
+                        ui.nav_panel(
+                            "Polar Heatmap",
+                            ui.div(
+                                {"style": "height: 100%; display: flex; align-items: center; justify-content: center;"},
+                                output_widget("fft_polar_heatmap")
+                            )
+                        ),
+                        ui.nav_panel(
+                            "Radial Profile",
+                            ui.div(
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
+                                # Left: 1D plot
+                                ui.div(
+                                    {"style": "width: 100%; height: 100%;"},
+                                    output_widget("fft_1d_plot")
+                                ),
+                                # Right: Controls
+                                ui.div(
+                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
+                                    ui.input_checkbox("log_y", "Log Scale", value=False),
+                                    ui.input_checkbox("use_mean_profile", "Use Average Profile", value=False),
+                                    ui.input_checkbox("smooth", "Smooth Signal", value=False),
+                                    ui.input_checkbox("detrend", "Detrend Signal", value=False),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.panel_conditional(
+                                            "input.smooth",
+                                            ui.input_slider("window_size", "Window Size", min=1, max=11, value=3, step=2),
+                                        ),
+                                    ),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.input_checkbox("super_resolution", "Super Resolution", value=True),
+                                        ui.panel_conditional(
+                                            "input.super_resolution",
+                                            ui.input_slider("gaussian_window", "Gaussian Window (pixels)", min=1, max=21, value=5, step=2),
+                                        ),
+                                    ),
+                                    ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
+                                ),
+                                # Footer for radial profile tab
+                                ui.div(
+                                    {"style": "text-align: center; padding: 5px; font-size: 12px; color: #666; border-top: 1px solid #dee2e6; position: absolute; bottom: 0; left: 0; right: 0;"},
+                                    "Radial Max of the 2D FFT. Drag to zoom, double-click to reset."
+                                )
+                            )
+                        )
+                    ),
+                    full_screen=True,
+                    style="flex: 1; min-height: 400px;"
+                ),
+                # Result card (bottom)
+                ui.card(
+                    ui.card_header("Result"),
+                    ui.div(
+                        {"style": "padding: 15px; display: flex; align-items: center; gap: 15px; min-height: 80px;"},
+                        # Apix slider
+                        ui.div(
+                            {"style": "flex: 2;"},
+                            ui.input_slider("apix_slider", "Apix (Å/px)", min=0.01, max=2.0, value=1.0, step=0.001),
+                        ),
+                        # Apix exact input and Set button
+                        ui.div(
+                            {"style": "display: flex; align-items: center; gap: 5px; flex: 1;"},
+                            ui.input_text("apix_exact_str", "Exact:", value="1.0", width="80px"),
+                            ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
+                        ),
+                        # Add to Table button
+                        ui.div(
+                            {"style": "flex: 1; display: flex; align-items: center;"},
+                            ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%; display: flex; align-items: center; justify-content: center;"),
+                        )
+                    ),
+                    style="flex: 0 0 auto; min-height: 100px;"
+                )
+            ),
+            col_widths=[5, 7],
+        )
+    ),
+    # Secondary analysis section - scrollable below
+    ui.div(
+        {"style": "margin-top: 20px;"},
+        ui.card(
+            ui.card_header("Region Analysis Table"),
+            # Use row layout: table+buttons on left (55%), plot on right (45%), both full height
+            ui.layout_columns(
+                # Left column: Table and controls (55% width, 100% height)
+                ui.div(
+                    {"style": "display: flex; flex-direction: column; height: 500px;"},
+                    ui.div(
+                        {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
+                        ui.output_data_frame("region_table"),
+                    ),
+                    ui.div(
+                        {"style": "flex-shrink: 0; display: flex; gap: 10px; padding: 10px; justify-content: center; align-items: center; flex-wrap: wrap; border-top: 1px solid #dee2e6;"},
+                        ui.div(
+                            {"style": "display: flex; gap: 5px; align-items: center;"},
+                            ui.input_action_button("random_generate", "Random Generate", class_="btn-info"),
+                            ui.div(
+                                {"style": "display: flex; flex-direction: column; align-items: center;"},
+                                ui.div(
+                                    {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
+                                    "Count"
+                                ),
+                                ui.input_numeric("random_count", None, value=5, min=1, max=100, step=1, width="70px"),
+                            ),
+                            ui.div(
+                                {"style": "display: flex; flex-direction: column; align-items: center;"},
+                                ui.div(
+                                    {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
+                                    "Size %"
+                                ),
+                                ui.input_numeric("region_size_percent", None, value=0.2, min=0.1, max=1.0, step=0.1, width="70px"),
+                            ),
+                        ),
+                        ui.input_action_button("delete_selected", "Delete Selected", class_="btn-danger"),
+                        ui.input_action_button("clear_table", "Clear Table", class_="btn-secondary"),
+                        ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
+                    ),
+                ),
+                # Right column: Plot (45% width, 100% height)
+                ui.div(
+                    {"style": "height: 500px; padding: 10px; display: flex; flex-direction: column;"},
+                    ui.div(
+                        {"style": "flex: 1; min-height: 0;"},
+                        output_widget("apix_centered_by_nominal_plot"),
+                    ),
+                ),
+                col_widths=[7, 5],  # 58.3%/41.7% split (closest to 55%/45% with integer grid)
+            ),
+            ui.div(
+                {"class": "card-footer"},
+                "Table tracks all analyzed regions with their calibrated pixel sizes. Use Random Generate (count, size%) to analyze random regions from the current image, or manually select/delete rows.",
+            ),
+            full_screen=True,
+        ),
+        fillable=True,
+        )
+    )
 size = 360
 
 # ---------- Helper Functions ----------
@@ -640,6 +634,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Add reactive value to trigger autoscale on FFT calculation (not contrast changes)
     autoscale_trigger = reactive.Value(0)
     
+    
+    # Add reactive value to force complete FFT widget refresh
+    fft_widget_refresh_trigger = reactive.Value(0)
+    
     # Helper function to extract nominal value from filename
     def extract_nominal(filename):
         """Extract nominal value from filename (e.g., 0.75 from '130k-Pixel0.75A.tiff').
@@ -667,12 +665,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         'custom_resolution': None
     })
     
-    # Update base FFT trigger and 1D plot when cached FFT image changes
+    # Update 1D plot when cached FFT image changes (removed base_fft_trigger to prevent double render)
     @reactive.Effect
     @reactive.event(cached_fft_image)
     def _():
-        """Update base FFT trigger and 1D plot when the base FFT image changes."""
-        base_fft_trigger.set(base_fft_trigger.get() + 1)
+        """Update 1D plot when the base FFT image changes."""
         
         # Also update 1D plot widget if it exists
         widget = fft_1d_widget.get()
@@ -909,8 +906,12 @@ def server(input: Inputs, output: Outputs, session: Session):
                     print("You should see red dots appear in the selected area.")
                     return
             
+            # Clear all previous FFT data and trigger complete refresh
+            cached_fft_image.set(None)
+            fft_widget.set(None)
+            
             # Trigger FFT calculation
-            fft_trigger.set(fft_trigger.get() + 1)
+            base_fft_trigger.set(base_fft_trigger.get() + 1)
             
             # Trigger autoscale (only on calc_fft, not on contrast changes)
             autoscale_trigger.set(autoscale_trigger.get() + 1)
@@ -1491,6 +1492,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
             cached_fft_image.set(None)
             fft_widget.set(None)  # Clear FFT widget
+            base_fft_trigger.set(0)  # Also reset base trigger for clean state
 
             
             # Clear all overlay storage when upload fails
@@ -1552,6 +1554,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Reset FFT trigger and clear cached FFT images (but keep table data)
             fft_trigger.set(0)
+            base_fft_trigger.set(0)  # Also reset base trigger for clean state
             cached_fft_image.set(None)
             fft_widget.set(None)  # Clear FFT widget to prevent appending to previous widget
             drawn_shapes.set([])
@@ -1565,8 +1568,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': None
             })
             
-            # Clear all overlay storage from previous image analysis
-            # This ensures lattice points, ellipse fits, and tilt info don't persist to new images
+            # Clear all overlay storage
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
             tilt_info_storage.set(None)
@@ -1596,6 +1598,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'data': binned_data
             })
             print(f"Image data set successfully")
+            
         except Exception as e:
             print(f"Error loading image: {e}")
             import traceback
@@ -1670,13 +1673,18 @@ def server(input: Inputs, output: Outputs, session: Session):
             original_image_data.set(original_data)
             binned_image_data.set(binned_data)
             
-            # Reset all states (same as upload handler)
+            # Reset zoom state
             image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
+            
+            # Reset FFT trigger and clear cached FFT images (but keep table data)
             fft_trigger.set(0)
+            base_fft_trigger.set(0)  # Also reset base trigger for clean state
             cached_fft_image.set(None)
             fft_widget.set(None)  # Clear FFT widget to prevent appending to previous widget
             drawn_shapes.set([])
             
+            # Clear FFT calculation state when a new image is loaded
+            # This will make FFT displays empty until user calculates FFT for the new image
             fft_calculation_state.set({
                 'region': None,
                 'apix': None,
@@ -1684,7 +1692,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': None
             })
             
-            # Clear all overlay storage
+            # Clear all overlay storage from previous image analysis
+            # This ensures lattice points, ellipse fits, and tilt info don't persist to new images
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
             tilt_info_storage.set(None)
@@ -1705,7 +1714,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'current_measurement': None
             })
             
-            # Set image data for display
+            # Note: region_table_data is NOT cleared to allow comparison across multiple images
+            
+            # Also keep the old format for compatibility with FFT calculations
             img = Image.fromarray(binned_data.astype(np.uint8))
             raw_image_data.set({
                 'img': img,
@@ -1713,6 +1724,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             print(f"Successfully loaded image from URL: {original_filename}")
+            
             
             # Clean up temporary file
             try:
@@ -1758,31 +1770,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         except Exception as e:
             print(f"Auto-download on startup failed: {e}")
 
-    @reactive.Effect
-    @reactive.event(fft_trigger)
-    def _():
-        """Update cached FFT images when FFT is manually triggered (Calc FFT button)."""
-        #print("FFT calculation triggered - checking drawn region")
-        
-        region = get_current_region()
-        if region is not None:
-            print(f"FFT region size: {region.size}")
-            # Generate base FFT image with current contrast
-            fft_img = compute_fft_image_region(region, input.contrast())
-            cached_fft_image.set(fft_img)
-            
-            # Store the calculation state for 1D FFT consistency
-            fft_calculation_state.set({
-                'region': region,
-                'apix': get_apix(),
-                'resolution_type': input.resolution_type(),
-                'custom_resolution': input.custom_resolution()
-            })
-            
-            print("FFT image updated successfully")
-        else:
-            cached_fft_image.set(None)
-            print("No region available for FFT calculation")
+    # FFT calculation is now done directly in fft_with_circle widget function
 
     # Remove the effect that forces FFT redraws - this was causing unnecessary re-renders
 
@@ -2043,6 +2031,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         fft_arr = np.array(fft_img.convert('L')).astype(np.uint8)
 
         # Create the FFT figure manually to ensure click events work
+        # Add unique identifier to force complete recreation
         fig = go.Figure()
         
         # Add heatmap for display
@@ -2098,17 +2087,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Force square aspect ratio
         fig.update_xaxes(scaleanchor="y", scaleratio=1)
 
-        
         # Note: All shapes (circles, measurements, lattice points) are now handled by 
         # separate overlay effects to avoid re-rendering base FFT on state changes
-        
-
-        
-        # Note: Lattice points are now handled by separate overlay effect
-        # to avoid re-rendering base FFT when mode changes
-        
-        # Note: Ellipse will be added dynamically via FigureWidget callback when "Fit Ellipse" is clicked
-        # This prevents re-rendering the entire FFT figure
         
         # Configure interactive layout
         fig.update_layout(
@@ -2117,9 +2097,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             autosize=True,
             dragmode='pan',  # Keep pan mode for now, will be updated after circle is drawn
             modebar=dict(
-                #add=['drawcircle', 'drawline', 'eraseshape', 'zoom', 'pan', 'reset+autorange'],
                 add=[ 'zoom', 'pan', 'reset+autorange'],
-
                 remove=['select2d', 'lasso2d'],
                 bgcolor='rgba(255,255,255,0.8)',
                 color='black',
@@ -2271,6 +2249,31 @@ def server(input: Inputs, output: Outputs, session: Session):
         return fw
 
     # Effect to update FFT heatmap data when contrast changes (without recreating the entire figure)
+    @reactive.Effect
+    @reactive.event(base_fft_trigger)
+    def _():
+        """Update cached FFT images when FFT is manually triggered (Calc FFT button)."""
+        print("FFT calculation triggered - checking drawn region")
+        
+        region = get_current_region()
+        if region is not None:
+            print(f"FFT region size: {region.size}")
+            # Generate base FFT image with current contrast
+            fft_img = compute_fft_image_region(region, input.contrast())
+            cached_fft_image.set(fft_img)
+            
+            # Store the calculation state for 1D FFT consistency
+            fft_calculation_state.set({
+                'region': region,
+                'apix': get_apix(),
+                'resolution_type': input.resolution_type(),
+                'custom_resolution': input.custom_resolution()
+            })
+            
+            print("✅ FFT image cached successfully")
+        else:
+            print("❌ No region available for FFT calculation")
+
     @reactive.Effect
     @reactive.event(input.contrast)
     def _():
