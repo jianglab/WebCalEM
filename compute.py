@@ -16,6 +16,12 @@ import math
 from skimage.transform import resize_local_mean
 import plotly.graph_objects as go
 import plotly.express as px
+try:
+    from finufft import nufft2d2
+    FINUFFT_AVAILABLE = True
+except ImportError:
+    FINUFFT_AVAILABLE = False
+from scipy.stats import median_abs_deviation
 
 
 def fit_ellipse_fixed_center(points, center=(0, 0)):
@@ -500,23 +506,51 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
     hover_text = []
     
     for i, x_val in enumerate(plot_data['x_data']):
-        # Calculate apix using the radius and current resolution (unbinned coordinates)
-        if resolution is not None and x_val > 0:
-            if region is not None:
-                region_size = region.size[0]  # Unbinned region size
-                # x_val is in unbinned FFT pixel coordinates
-                fft_radius = x_val
+        # Check if x_val is spatial frequency or radius
+        if 'target_resolution' in plot_data:
+            # This is from non-uniform FFT, x_val is spatial frequency (1/Å)
+            if x_val > 0:
+                resolution_val = 1 / x_val
+                resolution_str = f"{resolution_val:.2f} Å"
+                freq_str = f"{x_val:.4f} Å⁻¹"
                 
-                # Calculate apix using the correct formula for unbinned coordinates
-                apix_value = (fft_radius * resolution) / region_size
-                apix_str = f"{apix_value:.3f}"
+                # Calculate corresponding apix for the target resolution
+                if region is not None:
+                    region_size = region.size[0] if hasattr(region, 'size') else region.shape[0]
+                    # For non-uniform FFT, we need to estimate the equivalent radius
+                    # Using the target resolution from plot_data
+                    target_res = plot_data.get('target_resolution', resolution_val)
+                    equivalent_radius = (region_size * plot_data.get('nominal_apix', 1.0)) / target_res
+                    apix_value = (equivalent_radius * resolution_val) / region_size
+                    apix_str = f"{apix_value:.3f} Å/px"
+                else:
+                    apix_str = "N/A"
+            else:
+                resolution_str = "∞ Å"
+                freq_str = f"{x_val:.4f} Å⁻¹"
+                apix_str = "N/A"
+            
+            # Create hover info with spatial frequency, resolution, and apix
+            hover_info = f"Spatial frequency: {freq_str}<br>Resolution: {resolution_str}<br>Apix: {apix_str}"
+        else:
+            # This is from traditional FFT, x_val is radius in pixels
+            if resolution is not None and x_val > 0:
+                if region is not None:
+                    region_size = region.size[0]  # Unbinned region size
+                    # x_val is in unbinned FFT pixel coordinates
+                    fft_radius = x_val
+                    
+                    # Calculate apix using the correct formula for unbinned coordinates
+                    apix_value = (fft_radius * resolution) / region_size
+                    apix_str = f"{apix_value:.3f}"
+                else:
+                    apix_str = "N/A"
             else:
                 apix_str = "N/A"
-        else:
-            apix_str = "N/A"
+            
+            # Create hover info with radius and apix
+            hover_info = f"Radius: {x_val:.1f} pixels<br>Apix: {apix_str} Å/px"
         
-        # Create hover info with radius and apix
-        hover_info = f"Radius: {x_val:.1f} pixels<br>Apix: {apix_str} Å/px"
         hover_text.append(hover_info)
     
     fig.add_trace(go.Scatter(
@@ -556,16 +590,47 @@ def create_fft_1d_plotly_figure(plot_data: dict, resolution: float, region: Imag
                 ylim = (-0.1, 0.1)
 
     # Update layout with hover functionality
+    # Set x-axis title and formatting based on data type
+    if 'target_resolution' in plot_data:
+        x_axis_title = "Spatial frequency (1/Res)"
+        
+        # Create custom tick values and labels for 1/Res format
+        x_min, x_max = xlim
+        # Generate reasonable tick positions
+        n_ticks = 6  # Number of ticks
+        tick_vals = np.linspace(x_min, x_max, n_ticks)
+        tick_text = []
+        for val in tick_vals:
+            if val > 0:
+                res = 1 / val
+                tick_text.append(f"1/{res:.2f}")
+            else:
+                tick_text.append("1/∞")
+        
+        xaxis_config = dict(
+            range=xlim, 
+            showgrid=True, 
+            matches='x',
+            tickvals=tick_vals,
+            ticktext=tick_text,
+            tickmode='array'
+        )
+    else:
+        x_axis_title = "Radius (pixels)"
+        xaxis_config = dict(range=xlim, showgrid=True, matches='x')
+        
     fig.update_layout(
         title="1D FFT Radial Profile",
-        xaxis_title="Radius (pixels)",
+        xaxis_title=x_axis_title,
         yaxis_title=plot_data['y_axis_title'],
-        xaxis=dict(range=xlim, showgrid=True, matches='x'),  # Share x-axis with heatmap
+        xaxis=xaxis_config,
         yaxis=dict(range=ylim, showgrid=True),
         showlegend=True,
         legend=dict(x=0.02, y=0.02, xanchor='left', yanchor='bottom'),
-        height=400,
+        height=200,
+        width=650,  # Fixed width to match other plots
         margin=dict(l=60, r=20, t=60, b=60),
+        autosize=False,
         hovermode="x unified"
     )
     return fig
@@ -1081,9 +1146,538 @@ def create_fft_2d_plotly_figure(
             y_ellipse = b_scaled * np.sin(t)
             x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
             y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
-            x_final = cx + x_rot
-            y_final = cy + y_rot
-            fig.add_trace(go.Scatter(x=x_final, y=y_final, mode='lines', line=dict(color='red', width=2), showlegend=False, hoverinfo='skip'))
-        
 
-    return fig 
+
+def nufft_resolution_range(images, apix, res_low=0, res_high=0, r_samples=-1, theta_samples=180, return_R_only=False):
+    """
+    Non-uniform FFT implementation similar to fft_resolution_range from images2star.py.
+    
+    Args:
+        images: Input image(s) as numpy array
+        apix: Pixel size in Å/pixel
+        res_low: Low resolution limit (Å), 0 means no limit
+        res_high: High resolution limit (Å), 0 means Nyquist
+        r_samples: Number of radial samples, -1 means min(image_shape)//2
+        theta_samples: Number of angular samples
+        return_R_only: If True, return only the R array
+        
+    Returns:
+        Non-uniform FFT result or R array if return_R_only=True
+    """
+    if not FINUFFT_AVAILABLE:
+        raise ImportError("finufft package is required for non-uniform FFT. Please install with: pip install finufft")
+    
+    R0 = 1 / res_low if res_low > 0 else 0
+    R1 = 1 / res_high if res_high > 0 else 1 / (2 * apix)
+    nr = r_samples if r_samples > 0 else min(images.shape[-2:]) // 2
+    R = np.linspace(start=R0, stop=R1, num=nr, endpoint=True)
+    
+    if return_R_only:
+        return R
+    
+    Theta = np.linspace(start=0, stop=np.pi, num=theta_samples, endpoint=False)
+    Theta, R = np.meshgrid(Theta, R, indexing="ij")
+    Y = (2 * np.pi * apix * R * np.sin(Theta)).flatten(order="C")
+    X = (2 * np.pi * apix * R * np.cos(Theta)).flatten(order="C")
+    
+    if len(images.shape) > 2:
+        if len(images) > 1:
+            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+        else:
+            fft = nufft2d2(x=X, y=Y, f=images[0].astype(np.complex128), eps=1e-6)
+    else:
+        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+    
+    if len(images.shape) > 2:
+        new_shape = list(images.shape[:-2]) + list(R.shape)
+    else:
+        new_shape = R.shape
+    
+    fft = fft.reshape(new_shape)
+    return fft
+
+
+def calibrateMag_process_one_region(region_image, apix, resolution, resolution_range_percent=10, r_samples=100, theta_samples=360):
+    """
+    Process one image region using non-uniform FFT similar to calibrateMag_process_one_micrograph.
+    
+    Args:
+        region_image: PIL Image or numpy array of the region
+        apix: Nominal pixel size in Å/pixel
+        resolution: Resolution of interest in Å
+        resolution_range_percent: Range around resolution as percentage (default 10%)
+        r_samples: Number of radial samples
+        theta_samples: Number of angular samples
+        
+    Returns:
+        tuple: (pwr_curve, pwr) - 1D power curve and 2D power array
+    """
+    if not FINUFFT_AVAILABLE:
+        # Fallback to regular FFT if finufft is not available
+        print("Warning: finufft not available, using regular FFT fallback")
+        return _fallback_fft_processing(region_image, apix, resolution, resolution_range_percent)
+    
+    # Convert PIL Image to numpy array if needed
+    if isinstance(region_image, Image.Image):
+        images = np.array(region_image.convert("L")).astype(np.float32)
+    else:
+        images = region_image.astype(np.float32)
+    
+    # Ensure we have proper shape for nufft
+    if len(images.shape) == 2:
+        images = np.expand_dims(images, axis=0)
+    
+    # Calculate resolution range
+    range_value = resolution * (resolution_range_percent / 100.0)
+    res_low = resolution + range_value  # Lower spatial frequency (higher Å value)
+    res_high = resolution - range_value  # Higher spatial frequency (lower Å value)
+    
+    # Ensure res_high doesn't go below Nyquist limit
+    nyquist_resolution = 2 * apix
+    if res_high < nyquist_resolution:
+        res_high = nyquist_resolution
+    
+    try:
+        # Compute non-uniform FFT
+        fft = nufft_resolution_range(
+            images, apix, res_low, res_high, r_samples, theta_samples, return_R_only=False
+        )
+        
+        # Calculate power spectrum
+        pwr = np.abs(fft)
+        
+        # Get 1D profile by taking maximum across angular samples
+        pwr_1d = pwr.max(axis=tuple(range(len(pwr.shape) - 1)))
+        
+        # Normalize the signal
+        pwr_1d -= np.median(pwr_1d)
+        pwr_curve = pwr_1d / median_abs_deviation(pwr_1d)
+        
+        return (pwr_curve, pwr)
+        
+    except Exception as e:
+        print(f"Non-uniform FFT failed: {e}, falling back to regular FFT")
+        return _fallback_fft_processing(region_image, apix, resolution, resolution_range_percent)
+
+
+def _fallback_fft_processing(region_image, apix, resolution, resolution_range_percent):
+    """
+    Fallback FFT processing using regular numpy FFT when finufft is not available.
+    """
+    # Convert PIL Image to numpy array if needed
+    if isinstance(region_image, Image.Image):
+        arr = np.array(region_image.convert("L")).astype(np.float32)
+    else:
+        arr = region_image.astype(np.float32)
+    
+    # Standard FFT processing
+    f = np.fft.fft2(arr)
+    fshift = np.fft.fftshift(f)
+    pwr_2d = np.abs(fshift)
+    
+    # Calculate radial profile
+    cy, cx = np.array(pwr_2d.shape) // 2
+    y, x = np.indices(pwr_2d.shape)
+    r = np.sqrt((x - cx)**2 + (y - cy)**2)
+    r = r.astype(np.int32)
+    
+    # Calculate max radial profile
+    max_radial = np.zeros(r.max() + 1)
+    for radius in range(r.max() + 1):
+        mask = (r == radius)
+        if np.any(mask):
+            max_radial[radius] = np.max(pwr_2d[mask])
+    
+    # Focus on resolution range of interest
+    center_radius = (arr.shape[0] * apix) / resolution
+    range_pixels = int(center_radius * (resolution_range_percent / 100.0))
+    start_idx = max(0, int(center_radius - range_pixels))
+    end_idx = min(len(max_radial), int(center_radius + range_pixels))
+    
+    pwr_1d = max_radial[start_idx:end_idx]
+    
+    # Normalize
+    if len(pwr_1d) > 0:
+        pwr_1d -= np.median(pwr_1d)
+        pwr_curve = pwr_1d / (median_abs_deviation(pwr_1d) + 1e-8)
+    else:
+        pwr_curve = np.array([0])
+    
+    # Create a simple 2D representation for consistency
+    pwr_2d_region = pwr_2d[cy-50:cy+50, cx-50:cx+50] if pwr_2d.shape[0] > 100 else pwr_2d
+    
+    return (pwr_curve, pwr_2d_region)
+
+
+def compute_fft_1d_data_nufft(region: Image.Image, apix: float, use_mean_profile: bool = False,
+                             log_y: bool = False, smooth: bool = False, window_size: int = 3,
+                             detrend: bool = False, resolution_type: str = None,
+                             custom_resolution: float = None) -> dict:
+    """
+    Calculate 1D FFT data using non-uniform FFT based on resolution of interest.
+    This replaces the traditional uniform FFT with a targeted approach around specific resolutions.
+    
+    Args:
+        region: Image region to analyze
+        apix: Nominal pixel size in Å/pixel
+        use_mean_profile: Whether to use mean or max profile (ignored in nufft version)
+        log_y: Whether to use log scale for y-axis
+        smooth: Whether to apply smoothing
+        window_size: Window size for smoothing
+        detrend: Whether to detrend the signal
+        resolution_type: Type of resolution for targeted analysis
+        custom_resolution: Custom resolution value
+        
+    Returns:
+        Dictionary containing plot data
+    """
+    # Get resolution of interest
+    resolution, _ = get_resolution_info(resolution_type, custom_resolution)
+    if resolution is None:
+        # Default to a reasonable resolution if none specified
+        resolution = 3.0  # Å
+    
+    try:
+        # Use non-uniform FFT processing
+        pwr_curve, pwr_2d = calibrateMag_process_one_region(
+            region_image=region,
+            apix=apix,
+            resolution=resolution,
+            resolution_range_percent=10,  # 10% range around resolution
+            r_samples=100,
+            theta_samples=360
+        )
+        
+        # Create x-axis data in spatial frequency (1/Å)
+        range_value = resolution * 0.1  # 10% range
+        res_low = resolution + range_value
+        res_high = resolution - range_value
+        
+        # Convert resolutions to spatial frequencies (1/Å)
+        freq_low = 1 / res_low if res_low > 0 else 0
+        freq_high = 1 / res_high if res_high > 0 else 1 / (2 * apix)
+        
+        # Create x-axis in spatial frequency
+        x_data = np.linspace(freq_low, freq_high, len(pwr_curve))
+        y_data = pwr_curve
+        
+        print(f"Non-uniform FFT results:")
+        print(f"  Resolution target: {resolution:.2f} Å")
+        print(f"  Resolution range: {res_low:.2f} - {res_high:.2f} Å")
+        print(f"  Spatial frequency range: {freq_low:.4f} - {freq_high:.4f} Å⁻¹")
+        print(f"  Power curve length: {len(pwr_curve)}")
+        print(f"  X-axis range: {x_data[0]:.4f} - {x_data[-1]:.4f} Å⁻¹")
+        
+        # Apply log scale if requested
+        if log_y:
+            y_data = np.log1p(np.abs(y_data))
+            y_axis_title = "Log(FFT intensity)"
+        else:
+            y_axis_title = "FFT intensity"
+        
+        # Apply smoothing if requested
+        if smooth and len(y_data) > window_size:
+            kernel = np.ones(window_size) / window_size
+            pad_amount = (len(kernel) - 1) // 2
+            padded_y_data = np.pad(y_data, pad_width=pad_amount, mode='reflect')
+            y_data = np.convolve(padded_y_data, kernel, mode='valid')
+            y_data = y_data - y_data.min()
+        
+        # Apply detrending if requested
+        if detrend and len(y_data) > 2:
+            m, b = np.polyfit(x_data, y_data, 1)
+            baseline = m * x_data + b
+            y_data = y_data - baseline
+            y_data = y_data - y_data.min()
+        
+        # Calculate resolution positions for display (in spatial frequency)
+        resolution_positions = {}
+        if resolution_type == "Graphene (2.13 Å)":
+            resolution_positions['graphene'] = 1 / 2.13
+        elif resolution_type == "Gold (2.355 Å)":
+            resolution_positions['gold'] = 1 / 2.355
+        elif resolution_type == "Ice (3.661 Å)":
+            resolution_positions['ice'] = 1 / 3.661
+        elif resolution_type == "Custom" and custom_resolution:
+            resolution_positions['custom'] = 1 / custom_resolution
+        
+        return {
+            'x_data': x_data,
+            'y_data': y_data,
+            'profile_label': f"Non-uniform FFT profile ({resolution:.2f}Å ±10%)",
+            'y_axis_title': y_axis_title,
+            'x_min': freq_low,
+            'x_max': freq_high,
+            'arr_shape': np.array(region).shape if isinstance(region, Image.Image) else region.shape,
+            'resolution_positions': resolution_positions,
+            'resolution_range': (res_low, res_high),
+            'target_resolution': resolution,
+            'nominal_apix': apix
+        }
+        
+    except Exception as e:
+        print(f"Non-uniform FFT computation failed: {e}")
+        # Fallback to original uniform FFT method
+        return compute_fft_1d_data(region, apix, use_mean_profile, log_y, smooth, window_size, detrend, resolution_type, custom_resolution)
+
+
+def fft_resolution_range_region(region_data, apix, res_low=0, res_high=0, r_samples=-1, theta_samples=180, return_R_only=False):
+    """
+    Similar to fft_resolution_range from images2star.py but takes image region data instead of reading from file.
+    
+    Args:
+        region_data: numpy array of image region data
+        apix: Pixel size in Å/pixel
+        res_low: Low resolution limit (Å), 0 means no limit
+        res_high: High resolution limit (Å), 0 means Nyquist
+        r_samples: Number of radial samples, -1 means min(image_shape)//2
+        theta_samples: Number of angular samples
+        return_R_only: If True, return only the R array
+        
+    Returns:
+        Non-uniform FFT result or R array if return_R_only=True
+    """
+    if not FINUFFT_AVAILABLE:
+        raise ImportError("finufft package is required for non-uniform FFT. Please install with: pip install finufft")
+    
+    # Ensure we have proper data type and shape
+    if isinstance(region_data, Image.Image):
+        images = np.array(region_data.convert("L")).astype(np.float32)
+    else:
+        images = region_data.astype(np.float32)
+    
+    # Ensure proper shape for nufft
+    if len(images.shape) == 2:
+        images = np.expand_dims(images, axis=0)
+    
+    R0 = 1 / res_low if res_low > 0 else 0
+    R1 = 1 / res_high if res_high > 0 else 1 / (2 * apix)
+    nr = r_samples if r_samples > 0 else min(images.shape[-2:]) // 2
+    R = np.linspace(start=R0, stop=R1, num=nr, endpoint=True)
+    
+    if return_R_only:
+        return R
+    
+    Theta = np.linspace(start=0, stop=np.pi, num=theta_samples, endpoint=False)
+    Theta, R = np.meshgrid(Theta, R, indexing="ij")
+    Y = (2 * np.pi * apix * R * np.sin(Theta)).flatten(order="C")
+    X = (2 * np.pi * apix * R * np.cos(Theta)).flatten(order="C")
+    
+    if len(images.shape) > 2:
+        if len(images) > 1:
+            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+        else:
+            fft = nufft2d2(x=X, y=Y, f=images[0].astype(np.complex128), eps=1e-6)
+    else:
+        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+    
+    if len(images.shape) > 2:
+        new_shape = list(images.shape[:-2]) + list(R.shape)
+    else:
+        new_shape = R.shape
+    
+    fft = fft.reshape(new_shape)
+    return fft
+
+
+def calibrateMag_process_one_region_advanced(region_data, apix, res_low, res_high, r_samples, theta_samples):
+    """
+    Similar to calibrateMag_process_one_micrograph from images2star.py but takes image region data instead of reading from file.
+    
+    Args:
+        region_data: numpy array or PIL Image of the region data
+        apix: Pixel size in Å/pixel
+        res_low: Low resolution limit (Å)
+        res_high: High resolution limit (Å)
+        r_samples: Number of radial samples
+        theta_samples: Number of angular samples
+        
+    Returns:
+        tuple: (pwr_curve, pwr) - 1D power curve and 2D power array
+    """
+    # Convert PIL Image to numpy array if needed
+    if isinstance(region_data, Image.Image):
+        images = np.array(region_data.convert("L")).astype(np.float32)
+    else:
+        images = region_data.astype(np.float32)
+    
+    # Ensure proper shape for processing
+    if len(images.shape) == 2:
+        images = np.expand_dims(images, axis=0)
+    
+    try:
+        # Use the non-uniform FFT function
+        fft = fft_resolution_range_region(
+            images,
+            apix,
+            res_low,
+            res_high,
+            r_samples,
+            theta_samples,
+            return_R_only=False,
+        )
+        
+        # Calculate power spectrum
+        pwr = np.abs(fft)
+        
+        # Get 1D profile by taking maximum across all dimensions except the last one
+        pwr_1d = pwr.max(axis=tuple(range(len(pwr.shape) - 1)))
+        
+        # Normalize the signal similar to original function
+        pwr_1d -= np.median(pwr_1d)
+        pwr_curve = pwr_1d / median_abs_deviation(pwr_1d)
+        
+        n_ptcl = len(images)
+        return (pwr_curve, pwr)
+        
+    except Exception as e:
+        print(f"Advanced region processing failed: {e}, falling back to basic method")
+        # Fallback to the basic calibrateMag_process_one_region function
+        return calibrateMag_process_one_region(
+            region_image=images[0] if len(images.shape) > 2 else images,
+            apix=apix,
+            resolution=(res_low + res_high) / 2,  # Use average as target resolution
+            resolution_range_percent=((res_low - res_high) / ((res_low + res_high) / 2)) * 100,
+            r_samples=r_samples,
+            theta_samples=theta_samples
+        )
+
+
+def estimate_best_apix_from_nufft(
+    region_image,
+    nominal_apix: float,
+    target_resolution: float,
+    res_window_frac: float = 0.05,   # ± window around target resolution as fraction
+    r_samples: int = 200,            # radial samples from slider
+    theta_samples: int = 360,        # angular samples from slider
+    refine_once: bool = True,        # do one fixed-point refinement pass
+):
+    """
+    Estimate the best apix value using NuFFT similar to estimate_best_apix from images2star.py.
+    Always uses nominal apix as baseline and performs _single_pass analysis.
+    
+    Args:
+        region_image: Image region data (PIL Image or numpy array)
+        nominal_apix: Initial nominal pixel size (baseline)
+        target_resolution: Target resolution in Angstroms
+        res_window_frac: ± window around target resolution as fraction (e.g., 0.05 = 5%)
+        r_samples: Number of radial samples (from slider)
+        theta_samples: Number of angular samples (from slider)
+        refine_once: Whether to do one refinement iteration
+        
+    Returns:
+        tuple: (apix_est, peak_res_meas_A, meta_dict)
+    """
+    
+    def _single_pass(apix):
+        # Calculate resolution window around target
+        res_min = target_resolution * (1.0 - res_window_frac)
+        res_max = target_resolution * (1.0 + res_window_frac)
+        
+        # Process the region using NuFFT with current apix estimate
+        pwr_curve, pwr2d_raw = calibrateMag_process_one_region_advanced(
+            region_data=region_image,
+            apix=apix,
+            res_low=res_min,
+            res_high=res_max,
+            r_samples=r_samples,
+            theta_samples=theta_samples
+        )
+        
+        if not isinstance((pwr_curve, pwr2d_raw), tuple) or len((pwr_curve, pwr2d_raw)) < 2:
+            raise RuntimeError("calibrateMag_process_one_region_advanced must return (pwr_curve, pwr2d).")
+        
+        pwr_curve = np.asarray(pwr_curve, dtype=float)      # 1D max-over-angles profile
+        pwr2d_raw = np.asarray(pwr2d_raw)                   # 2D power map
+        
+        # --- normalize pwr2d to shape (theta, r) with true radial length n_r ---
+        p = np.squeeze(pwr2d_raw)
+        while p.ndim > 2:      # collapse extra batch dims if present
+            p = p.max(axis=0)
+        if p.ndim != 2:
+            raise RuntimeError(f"Expected 2D pwr2d after squeeze, got {p.shape}")
+        
+        # orient so first axis = theta, second = radius
+        if p.shape[0] == theta_samples:
+            p_theta_r = p
+        elif p.shape[1] == theta_samples:
+            p_theta_r = p.T
+        else:
+            p_theta_r = p if p.shape[0] <= p.shape[1] else p.T
+        
+        n_theta, n_r = p_theta_r.shape
+        res_grid = np.linspace(res_min, res_max, n_r, endpoint=True)
+        
+        # --- envelope and fixed-angle selection ---
+        r_env = p_theta_r.max(axis=0)           # envelope over theta
+        # use 1D curve if it matches length; otherwise use envelope for peak index
+        env = pwr_curve if len(pwr_curve) == n_r else r_env
+        k = int(np.argmax(env))                 # radial index of global peak
+        j_star = int(np.argmax(p_theta_r[:, k]))  # winning angle at that radius
+        radial_slice = p_theta_r[j_star, :].astype(float)
+        
+        # --- sub-sample (3-point parabolic) refinement in Å (no helper) ---
+        if 0 < k < n_r - 1:
+            y1, y2, y3 = radial_slice[k-1], radial_slice[k], radial_slice[k+1]
+            denom = (y1 - 2*y2 + y3)
+            if denom != 0:
+                dx = (res_grid[1] - res_grid[0])
+                delta = 0.5 * (y1 - y3) / denom
+                r_peak_A = res_grid[k] + delta * dx
+            else:
+                r_peak_A = res_grid[k]
+        else:
+            r_peak_A = res_grid[k]
+        
+        peak_res_meas_A = float(r_peak_A)
+        apix_est = apix * (target_resolution / peak_res_meas_A)
+        
+        # Calculate winning theta angle from j_star index
+        theta_grid = np.linspace(0, 360, n_theta, endpoint=False)
+        winning_theta = theta_grid[j_star] if j_star < len(theta_grid) else 0.0
+        
+        return apix_est, peak_res_meas_A, {
+            "k": k,
+            "j_star": j_star,
+            "winning_theta": winning_theta,
+            "peak_resolution": peak_res_meas_A,
+            "res_grid": res_grid,
+            "n_r": n_r,
+            "n_theta": n_theta,
+        }
+    
+    try:
+        # first pass at nominal apix (always start from nominal!)
+        apix_est, peak_res_meas_A, meta = _single_pass(nominal_apix)
+        
+        # optional single refinement pass starting from the corrected apix
+        if refine_once:
+            apix_est2, peak_res_meas_A2, meta2 = _single_pass(apix_est)
+            if abs(peak_res_meas_A2 - target_resolution) <= abs(peak_res_meas_A - target_resolution):
+                apix_est, peak_res_meas_A, meta = apix_est2, peak_res_meas_A2, meta2
+        
+        print(f"NuFFT Apix Estimation:")
+        print(f"  Nominal apix: {nominal_apix:.4f} Å/px")
+        print(f"  Target resolution: {target_resolution:.3f} Å")
+        print(f"  Resolution window: {target_resolution * (1.0 - res_window_frac):.3f} - {target_resolution * (1.0 + res_window_frac):.3f} Å")
+        print(f"  Measured peak resolution: {peak_res_meas_A:.3f} Å")
+        print(f"  Winning theta angle: {meta['winning_theta']:.1f}°")
+        print(f"  Peak position: θ={meta['winning_theta']:.1f}°, res={peak_res_meas_A:.3f}Å")
+        print(f"  Estimated apix: {apix_est:.4f} Å/px")
+        print(f"  Correction factor: {apix_est/nominal_apix:.4f}")
+        
+        return apix_est, peak_res_meas_A, meta
+        
+    except Exception as e:
+        print(f"Error in NuFFT apix estimation: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return nominal values as fallback
+        return nominal_apix, target_resolution, {
+            "error": str(e),
+            "k": 0,
+            "j_star": 0,
+            "res_grid": np.array([target_resolution]),
+            "n_r": r_samples,
+            "n_theta": theta_samples
+        } 

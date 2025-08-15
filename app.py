@@ -26,12 +26,13 @@ from compute import (
     get_resolution_info,
     compute_fft_1d_data,
     compute_fft_polar_heatmap_data,
+    calibrateMag_process_one_region_advanced,
+    estimate_best_apix_from_nufft,
     resolution_to_radius,
     create_fft_1d_plotly_figure,
     get_image,
     plot_image,
     get_image_with_binning,
-    extract_region_from_original,
     extract_region_no_binning,
     bin_image
 )
@@ -312,6 +313,10 @@ app_ui = ui.page_sidebar(
                         ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
                         ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
                     ),
+                    ui.div(
+                        {"class": "card-footer"},
+                        "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
+                    ),
                     full_screen=True,
                 ),
             ),
@@ -360,22 +365,72 @@ app_ui = ui.page_sidebar(
                             )
                         ),
                         ui.nav_panel(
-                            "Polar Heatmap",
+                            "NuFFT",
                             ui.div(
-                                {"style": "height: 100%; display: flex; align-items: center; justify-content: center;"},
-                                output_widget("fft_polar_heatmap")
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
+                                # Left: Main content area with NuFFT heatmap and power curve
+                                ui.div(
+                                    {"style": "height: 100%; display: flex; flex-direction: column;"},
+                                    # Top: NuFFT heatmap (70% height)
+                                    ui.div(
+                                        {"style": "flex: 7; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                                        output_widget("nufft_heatmap")
+                                    ),
+                                    # Bottom: Power curve plot (30% height)
+                                    ui.div(
+                                        {"style": "flex: 3; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                        output_widget("nufft_power_curve")
+                                    )
+                                ),
+                                # Right: Controls spanning entire height
+                                ui.div(
+                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
+                                    ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
+                                    ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
+                                    ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
+                                    ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.panel_conditional(
+                                            "input.nufft_smooth",
+                                            ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
+                                        ),
+                                    ),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.input_slider("nufft_r_samples", "Radial Samples", min=50, max=200, value=100, step=10),
+                                    ),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.input_slider("nufft_theta_samples", "Angular Samples", min=10, max=360, value=360, step=10),
+                                    ),
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.input_slider("nufft_res_range", "Resolution Range (%)", min=1, max=10, value=3, step=0.5),
+                                    ),
+                                    ui.input_action_button("nufft_find_apix", "Find Apix", class_="btn-primary"),
+                                )
                             )
                         ),
                         ui.nav_panel(
-                            "Radial Profile",
+                            "DFT",
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
-                                # Left: 1D plot
+                                # Left: Main content area with polar heatmap and radial profile
                                 ui.div(
-                                    {"style": "width: 100%; height: 100%;"},
-                                    output_widget("fft_1d_plot")
+                                    {"style": "height: 100%; display: flex; flex-direction: column;"},
+                                    # Top: Polar Heat Map (70% height)
+                                    ui.div(
+                                        {"style": "flex: 7; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                                        output_widget("fft_polar_heatmap")
+                                    ),
+                                    # Bottom: Radial Profile (30% height) 
+                                    ui.div(
+                                        {"style": "flex: 3; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                        output_widget("fft_1d_plot")
+                                    )
                                 ),
-                                # Right: Controls
+                                # Right: Controls spanning entire height
                                 ui.div(
                                     {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
                                     ui.input_checkbox("log_y", "Log Scale", value=False),
@@ -398,11 +453,6 @@ app_ui = ui.page_sidebar(
                                         ),
                                     ),
                                     ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
-                                ),
-                                # Footer for radial profile tab
-                                ui.div(
-                                    {"style": "text-align: center; padding: 5px; font-size: 12px; color: #666; border-top: 1px solid #dee2e6; position: absolute; bottom: 0; left: 0; right: 0;"},
-                                    "Radial Max of the 2D FFT. Drag to zoom, double-click to reset."
                                 )
                             )
                         )
@@ -2832,8 +2882,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 title=f'FFT Profile Near Frequency of Interest<br>Target: {target_radius:.1f} px ({target_resolution:.2f} Å @ {nominal_apix:.3f} Å/px)',
                 xaxis_title='Angle (degrees)',
                 yaxis_title='Radius (pixels)',
-                height=400,
+                height=300,
+                width=650,  # Fixed width to match NuFFT plots
                 margin=dict(l=60, r=20, t=80, b=40),
+                autosize=False,
                 xaxis=dict(
                     range=[0, 360],  # Full angle range
                     showgrid=True,
@@ -2868,6 +2920,345 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         except Exception as e:
             print(f"Error creating polar heatmap: {e}")
+            return go.Figure()
+    
+    @render_plotly("nufft_heatmap")
+    def nufft_heatmap():
+        # Check if FFT has been calculated
+        cached_fft = cached_fft_image.get()
+        if cached_fft is None:
+            return None
+        
+        # Get the stored FFT calculation state
+        calc_state = fft_calculation_state.get()
+        if calc_state['region'] is None:
+            return go.Figure()
+        
+        try:
+            # Check if we have an estimated apix from Find Apix
+            estimated_apix_data = estimated_apix.get()
+            nominal_apix = float(input.nominal_apix())
+            
+            if estimated_apix_data['source'] == 'estimated' and estimated_apix_data['value'] is not None:
+                current_apix = estimated_apix_data['value']
+                apix_source = f"Estimated Apix: {current_apix:.3f}"
+            else:
+                current_apix = nominal_apix
+                apix_source = f"Nominal Apix: {current_apix:.3f}"
+            
+            # Get resolution of interest (default to 2.13 Å for graphene)
+            if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+                resolution_map = {
+                    "Graphene (2.13 Å)": 2.13,
+                    "Graphene (100)": 2.13,
+                    "Graphene (110)": 1.23,
+                    "Gold (2.355 Å)": 2.355,
+                    "Gold (111)": 2.35,
+                    "Gold (200)": 2.04,
+                    "Gold (220)": 1.44,
+                    "Ice (3.661 Å)": 3.661
+                }
+                resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+            else:
+                resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+            
+            # Calculate resolution range: use slider value
+            res_range_percent = input.nufft_res_range() / 100.0  # Convert percentage to decimal
+            res_range = res_range_percent * resolution
+            res_low = resolution + res_range  # Higher Å value (lower frequency)
+            res_high = resolution - res_range  # Lower Å value (higher frequency)
+            
+            # Process the region using NuFFT with current apix
+            pwr_curve, pwr = calibrateMag_process_one_region_advanced(
+                region_data=calc_state['region'],
+                apix=current_apix,
+                res_low=res_low,
+                res_high=res_high,
+                r_samples=input.nufft_r_samples(),
+                theta_samples=input.nufft_theta_samples()
+            )
+            
+            # Get the transpose of pwr[0] which should have shape (r_samples, theta_samples)
+            if len(pwr.shape) > 2:
+                heatmap_data = pwr[0].T  # Transpose for proper display
+            else:
+                heatmap_data = pwr.T
+            
+            # Apply log scale if enabled
+            z_data = heatmap_data
+            if input.nufft_log_y():
+                z_data = np.log1p(np.abs(z_data))
+            
+            # Create resolution range and spatial frequency arrays
+            res_range_array = np.linspace(res_low, res_high, input.nufft_r_samples())
+            # Convert to spatial frequency (1/Å)
+            spatial_freq_array = 1.0 / res_range_array
+            
+            # Create angle array for x-axis labels  
+            angles = np.linspace(0, 360, input.nufft_theta_samples())
+            
+            # Create hover text
+            hover_text = []
+            for i in range(z_data.shape[0]):  # r_samples
+                row_text = []
+                for j in range(z_data.shape[1]):  # theta_samples
+                    if i < len(res_range_array) and j < len(angles):
+                        hover_info = f"Resolution: {res_range_array[i]:.3f} Å<br>Spatial freq: {spatial_freq_array[i]:.4f} Å⁻¹<br>Angle: {angles[j]:.1f}°<br>Intensity: {z_data[i,j]:.3f}"
+                    else:
+                        hover_info = f"R-idx: {i}<br>θ-idx: {j}<br>Intensity: {z_data[i,j]:.3f}"
+                    row_text.append(hover_info)
+                hover_text.append(row_text)
+            
+            # Create tick values and labels for spatial frequency y-axis
+            n_ticks = min(6, len(spatial_freq_array))  # Maximum 6 ticks
+            if n_ticks > 0:
+                tick_indices = np.linspace(0, len(spatial_freq_array)-1, n_ticks, dtype=int)
+                y_tickvals = tick_indices
+                y_ticktext = []
+                for idx in tick_indices:
+                    if idx < len(res_range_array):
+                        res_val = res_range_array[idx]
+                        y_ticktext.append(f"1/{res_val:.2f}")
+                    else:
+                        y_ticktext.append("")
+            else:
+                y_tickvals = []
+                y_ticktext = []
+            
+            # Create Plotly heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=z_data,
+                x=np.arange(z_data.shape[1]),  # Angular samples
+                y=np.arange(z_data.shape[0]),  # Spatial frequency samples
+                colorscale='viridis',
+                hoverongaps=False,
+                hovertemplate='%{text}<extra></extra>',
+                text=hover_text
+            ))
+            
+            fig.update_layout(
+                title=f'NuFFT Analysis: {resolution:.2f} Å ± {res_range:.3f} Å ({apix_source})',
+                xaxis_title='Angular Samples',
+                yaxis_title='Spatial Frequency (1/Res)', 
+                height=300,
+                width=650,  # Fixed width to prevent horizontal scrollbars
+                margin=dict(l=80, r=20, t=60, b=40),
+                autosize=False,
+                yaxis=dict(
+                    tickvals=y_tickvals,
+                    ticktext=y_ticktext,
+                    tickmode='array'
+                )
+            )
+            
+            # Add peak marker if we have estimated apix with peak position
+            if estimated_apix_data['source'] == 'estimated' and estimated_apix_data.get('show_peak_marker', False):
+                winning_theta = estimated_apix_data.get('winning_theta', 0.0)
+                peak_resolution = estimated_apix_data.get('peak_resolution', resolution)
+                target_resolution = estimated_apix_data.get('target_resolution', resolution)
+                
+                # Convert theta angle to angular sample index
+                theta_idx = (winning_theta / 360.0) * input.nufft_theta_samples()
+                
+                # Convert resolution to radial sample index
+                # Find the index corresponding to the peak resolution
+                res_range_array = np.linspace(res_low, res_high, input.nufft_r_samples())
+                if len(res_range_array) > 1:
+                    # Find closest resolution index
+                    res_idx = np.argmin(np.abs(res_range_array - peak_resolution))
+                else:
+                    res_idx = 0
+                
+                # Add red circle marker at the peak position (smaller and thinner)
+                fig.add_shape(
+                    type="circle",
+                    x0=theta_idx - 2,  # Smaller radius (2 instead of 3)
+                    y0=res_idx - 2,    
+                    x1=theta_idx + 2,
+                    y1=res_idx + 2,
+                    line_color="red",
+                    line_width=1,      # Thinner line (1 instead of 3)
+                    fillcolor="rgba(255,0,0,0.2)"  # More transparent
+                )
+                
+                # Add annotation for the peak (thinner arrow)
+                fig.add_annotation(
+                    x=theta_idx,
+                    y=res_idx,
+                    text=f"Peak: θ={winning_theta:.1f}°<br>res={peak_resolution:.3f}Å",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowcolor="red",
+                    arrowwidth=1,      # Thinner arrow (1 instead of 2)
+                    bgcolor="white",
+                    bordercolor="red",
+                    borderwidth=1,
+                    font=dict(size=9)  # Slightly smaller font
+                )
+            
+            return go.FigureWidget(fig)
+            
+        except Exception as e:
+            print(f"Error creating NuFFT heatmap: {e}")
+            import traceback
+            traceback.print_exc()
+            return go.Figure()
+    
+    @render_plotly("nufft_power_curve")
+    def nufft_power_curve():
+        # Check if FFT has been calculated
+        cached_fft = cached_fft_image.get()
+        if cached_fft is None:
+            return None
+        
+        # Get the stored FFT calculation state
+        calc_state = fft_calculation_state.get()
+        if calc_state['region'] is None:
+            return go.Figure()
+        
+        try:
+            # Check if we have an estimated apix from Find Apix
+            estimated_apix_data = estimated_apix.get()
+            nominal_apix = float(input.nominal_apix())
+            
+            if estimated_apix_data['source'] == 'estimated' and estimated_apix_data['value'] is not None:
+                current_apix = estimated_apix_data['value']
+                apix_source = f"Estimated Apix: {current_apix:.3f}"
+            else:
+                current_apix = nominal_apix
+                apix_source = f"Nominal Apix: {current_apix:.3f}"
+            
+            # Get resolution of interest
+            if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+                resolution_map = {
+                    "Graphene (2.13 Å)": 2.13,
+                    "Graphene (100)": 2.13,
+                    "Graphene (110)": 1.23,
+                    "Gold (2.355 Å)": 2.355,
+                    "Gold (111)": 2.35,
+                    "Gold (200)": 2.04,
+                    "Gold (220)": 1.44,
+                    "Ice (3.661 Å)": 3.661
+                }
+                resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+            else:
+                resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+            
+            # Calculate resolution range: use slider value
+            res_range_percent = input.nufft_res_range() / 100.0  # Convert percentage to decimal
+            res_range = res_range_percent * resolution
+            res_low = resolution + res_range
+            res_high = resolution - res_range
+            
+            # Process the region using NuFFT
+            pwr_curve, pwr = calibrateMag_process_one_region_advanced(
+                region_data=calc_state['region'],
+                apix=current_apix,
+                res_low=res_low,
+                res_high=res_high,
+                r_samples=input.nufft_r_samples(),
+                theta_samples=input.nufft_theta_samples()
+            )
+            
+            # Create resolution range and spatial frequency arrays for x-axis
+            res_range_array = np.linspace(res_low, res_high, len(pwr_curve))
+            # Convert to spatial frequency (1/Å)
+            spatial_freq_array = 1.0 / res_range_array
+            
+            # Apply log scale if enabled
+            y_data = pwr_curve
+            
+            # Apply smoothing if enabled
+            if input.nufft_smooth() and len(y_data) > input.nufft_window_size():
+                window_size = input.nufft_window_size()
+                kernel = np.ones(window_size) / window_size
+                pad_amount = (len(kernel) - 1) // 2
+                padded_y_data = np.pad(y_data, pad_width=pad_amount, mode='reflect')
+                y_data = np.convolve(padded_y_data, kernel, mode='valid')
+                y_data = y_data - y_data.min()
+                # Adjust spatial frequency array if length changed due to smoothing
+                if len(y_data) != len(spatial_freq_array):
+                    spatial_freq_array = spatial_freq_array[:len(y_data)]
+                    res_range_array = res_range_array[:len(y_data)]
+            
+            # Apply detrending if enabled
+            if input.nufft_detrend() and len(y_data) > 2:
+                m, b = np.polyfit(spatial_freq_array, y_data, 1)
+                baseline = m * spatial_freq_array + b
+                y_data = y_data - baseline
+                y_data = y_data - y_data.min()
+            
+            if input.nufft_log_y():
+                y_data = np.log1p(np.abs(y_data))
+                y_title = "Log(Intensity)"
+            else:
+                y_title = "Intensity"
+            
+            # Create custom hover text
+            hover_text = []
+            for i, (freq, res, intensity) in enumerate(zip(spatial_freq_array, res_range_array, y_data)):
+                hover_info = f"Resolution: {res:.3f} Å<br>Spatial freq: {freq:.4f} Å⁻¹<br>Intensity: {intensity:.3f}"
+                hover_text.append(hover_info)
+            
+            # Create the plot
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=spatial_freq_array,
+                y=y_data,
+                mode='lines',
+                name='Power Curve',
+                line=dict(color='blue', width=2),
+                hovertemplate='%{text}<extra></extra>',
+                text=hover_text
+            ))
+            
+            # Add vertical line at target resolution (converted to spatial frequency)
+            target_spatial_freq = 1.0 / resolution
+            fig.add_vline(
+                x=target_spatial_freq,
+                line_color="red",
+                line_dash="dash",
+                annotation_text=f"Target: 1/{resolution:.2f}"
+            )
+            
+            # Create tick values and labels for spatial frequency x-axis
+            n_ticks = min(6, len(spatial_freq_array))  # Maximum 6 ticks
+            if n_ticks > 0:
+                tick_indices = np.linspace(0, len(spatial_freq_array)-1, n_ticks, dtype=int)
+                x_tickvals = spatial_freq_array[tick_indices]
+                x_ticktext = []
+                for idx in tick_indices:
+                    if idx < len(res_range_array):
+                        res_val = res_range_array[idx]
+                        x_ticktext.append(f"1/{res_val:.2f}")
+                    else:
+                        x_ticktext.append("")
+            else:
+                x_tickvals = []
+                x_ticktext = []
+            
+            fig.update_layout(
+                title=f'NuFFT Power Curve: {resolution:.2f} Å ± {res_range:.3f} Å ({apix_source})',
+                xaxis_title='Spatial Frequency (1/Res)',
+                yaxis_title=y_title,
+                height=200,
+                width=650,  # Fixed width to match heatmap
+                margin=dict(l=60, r=20, t=40, b=60),
+                autosize=False,
+                showlegend=False,
+                xaxis=dict(
+                    tickvals=x_tickvals,
+                    ticktext=x_ticktext,
+                    tickmode='array'
+                )
+            )
+            
+            return go.FigureWidget(fig)
+            
+        except Exception as e:
+            print(f"Error creating NuFFT power curve: {e}")
+            import traceback
+            traceback.print_exc()
             return go.Figure()
 
     # Synchronize x-axis ranges between heatmap and 1D plot
@@ -3090,6 +3481,25 @@ def server(input: Inputs, output: Outputs, session: Session):
         'radius': None,
         'angle': None,
         'show_overlay': False
+    })
+    
+    # Store NuFFT data and estimated apix for Find Apix functionality
+    nufft_data_cache = reactive.Value({
+        'pwr_curve': None,
+        'pwr2d_raw': None,
+        'resolution': None,
+        'res_low': None,
+        'res_high': None,
+        'r_samples': None,
+        'theta_samples': None
+    })
+    
+    # Store estimated apix from NuFFT analysis
+    estimated_apix = reactive.Value({
+        'value': None,
+        'source': 'nominal',  # 'nominal' or 'estimated'
+        'peak_resolution': None,
+        'correction_factor': None
     })
 
     @output
@@ -3691,6 +4101,76 @@ def server(input: Inputs, output: Outputs, session: Session):
                     widget.layout.yaxis.title.text = "Log(FFT intensity)"
                 else:
                     widget.layout.yaxis.title.text = "FFT intensity"
+
+    @reactive.Effect
+    @reactive.event(input.nufft_find_apix)
+    def _():
+        """Handle Find Apix button click to estimate optimal apix using _single_pass approach."""
+        try:
+            # Get the current region and resolution info
+            calc_state = fft_calculation_state.get()
+            if calc_state['region'] is None:
+                print("No region selected for apix estimation")
+                return
+            
+            # Get nominal apix (always use as baseline)
+            nominal_apix = float(input.nominal_apix())
+            
+            # Get target resolution
+            if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+                resolution_map = {
+                    "Graphene (2.13 Å)": 2.13,
+                    "Graphene (100)": 2.13,
+                    "Graphene (110)": 1.23,
+                    "Gold (2.355 Å)": 2.355,
+                    "Gold (111)": 2.35,
+                    "Gold (200)": 2.04,
+                    "Gold (220)": 1.44,
+                    "Ice (3.661 Å)": 3.661
+                }
+                target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+            else:
+                target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+            
+            # Read parameters from sliders
+            res_window_frac = input.nufft_res_range() / 100.0  # Convert percentage to fraction
+            r_samples = input.nufft_r_samples()
+            theta_samples = input.nufft_theta_samples()
+            
+            # Estimate best apix using _single_pass approach (always starts from nominal)
+            apix_est, peak_res_meas, meta = estimate_best_apix_from_nufft(
+                region_image=calc_state['region'],
+                nominal_apix=nominal_apix,
+                target_resolution=target_resolution,
+                res_window_frac=res_window_frac,
+                r_samples=r_samples,
+                theta_samples=theta_samples,
+                refine_once=True
+            )
+            
+            # Update the apix slider
+            ui.update_slider("apix_slider", value=apix_est)
+            
+            # Update the exact apix text input in the result panel
+            ui.update_text("apix_exact_str", value=f"{apix_est:.4f}")
+            
+            # Store estimated apix data including peak position
+            estimated_apix.set({
+                'value': apix_est,
+                'source': 'estimated',
+                'peak_resolution': peak_res_meas,
+                'correction_factor': apix_est / nominal_apix,
+                'winning_theta': meta.get('winning_theta', 0.0),
+                'target_resolution': target_resolution,
+                'show_peak_marker': True
+            })
+            
+            print(f"Find Apix completed: {nominal_apix:.4f} → {apix_est:.4f} Å/px")
+            
+        except Exception as e:
+            print(f"Error in Find Apix: {e}")
+            import traceback
+            traceback.print_exc()
 
     @reactive.Effect
     @reactive.event(input.find_max)

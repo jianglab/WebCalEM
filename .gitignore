@@ -51,3 +51,8 @@ test_results_0.3/analysis_summary.txt
 test_tilt30_sigma06/analysis_summary.txt
 tilt_and_project_volume.py
 app_old.py
+images2star.py
+test_image/130K-Pixel0.75A_30tilt.tiff
+Untitled.ipynb
+app_broken.py
+.ipynb_checkpoints/Untitled-checkpoint.ipynb
