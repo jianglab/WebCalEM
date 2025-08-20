@@ -7,4 +7,6 @@ mrcfile>=1.4.0
 scipy>=1.10.0
 plotly>=5.0.0
 shinywidgets>=0.2.0
-scikit-image>=0.20.0 
+scikit-image>=0.20.0
+requests>=2.25.0
+finufft>=2.0.0 
