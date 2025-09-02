@@ -1551,6 +1551,8 @@ def estimate_best_apix_from_nufft(
     r_samples: int = 200,            # radial samples from slider
     theta_samples: int = 360,        # angular samples from slider
     refine_once: bool = True,        # do one fixed-point refinement pass
+    res_min_abs: float = None,       # absolute minimum resolution (Å), overrides res_window_frac
+    res_max_abs: float = None,       # absolute maximum resolution (Å), overrides res_window_frac
 ):
     """
     Estimate the best apix value using NuFFT similar to estimate_best_apix from images2star.py.
@@ -1564,6 +1566,8 @@ def estimate_best_apix_from_nufft(
         r_samples: Number of radial samples (from slider)
         theta_samples: Number of angular samples (from slider)
         refine_once: Whether to do one refinement iteration
+        res_min_abs: Absolute minimum spatial frequency (1/Å), overrides res_window_frac if provided
+        res_max_abs: Absolute maximum spatial frequency (1/Å), overrides res_window_frac if provided
         
     Returns:
         tuple: (apix_est, peak_res_meas_A, meta_dict)
@@ -1571,8 +1575,14 @@ def estimate_best_apix_from_nufft(
     
     def _single_pass(apix):
         # Calculate resolution window around target
-        res_min = target_resolution * (1.0 - res_window_frac)
-        res_max = target_resolution * (1.0 + res_window_frac)
+        if res_min_abs is not None and res_max_abs is not None:
+            # Use absolute resolution bounds (convert from 1/Å to Å)
+            res_min = 1.0 / res_max_abs  # Higher frequency -> lower resolution value in Å
+            res_max = 1.0 / res_min_abs  # Lower frequency -> higher resolution value in Å
+        else:
+            # Use relative window around target resolution
+            res_min = target_resolution * (1.0 - res_window_frac)
+            res_max = target_resolution * (1.0 + res_window_frac)
         
         # Process the region using NuFFT with current apix estimate
         pwr_curve, pwr2d_raw = calibrateMag_process_one_region_advanced(
@@ -1659,7 +1669,11 @@ def estimate_best_apix_from_nufft(
         print(f"NuFFT Apix Estimation:")
         print(f"  Nominal apix: {nominal_apix:.4f} Å/px")
         print(f"  Target resolution: {target_resolution:.3f} Å")
-        print(f"  Resolution window: {target_resolution * (1.0 - res_window_frac):.3f} - {target_resolution * (1.0 + res_window_frac):.3f} Å")
+        if res_min_abs is not None and res_max_abs is not None:
+            print(f"  Spatial frequency range: {res_min_abs:.1f} - {res_max_abs:.1f} 1/Å")
+            print(f"  Resolution window: {1.0/res_max_abs:.3f} - {1.0/res_min_abs:.3f} Å (absolute bounds)")
+        else:
+            print(f"  Resolution window: {target_resolution * (1.0 - res_window_frac):.3f} - {target_resolution * (1.0 + res_window_frac):.3f} Å (relative window)")
         print(f"  Measured peak resolution: {peak_res_meas_A:.3f} Å")
         print(f"  Winning theta angle: {meta['winning_theta']:.1f}°")
         print(f"  Peak position: θ={meta['winning_theta']:.1f}°, res={peak_res_meas_A:.3f}Å")
