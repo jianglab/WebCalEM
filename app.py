@@ -403,7 +403,10 @@ app_ui = ui.page_sidebar(
                                         {"style": "margin-bottom: 10px;"},
                                         ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=10, value=2, step=0.1),
                                     ),
-                                    # Removed Search Range slider - using fixed frequency range
+                                    ui.div(
+                                        {"style": "margin-bottom: 10px;"},
+                                        ui.input_slider("nufft_display_range", "Display Range (%)", min=1, max=10, value=3, step=0.5),
+                                    ),
                                     # ui.input_action_button("nufft_find_apix", "Find Apix", class_="btn-primary"),
                                 )
                             )
@@ -500,26 +503,26 @@ app_ui = ui.page_sidebar(
                     ),
                     ui.div(
                         {"style": "flex-shrink: 0; display: flex; gap: 10px; padding: 10px; justify-content: center; align-items: center; flex-wrap: wrap; border-top: 1px solid #dee2e6;"},
-                        ui.div(
-                            {"style": "display: flex; gap: 5px; align-items: center;"},
-                            ui.input_action_button("random_generate", "Random Generate", class_="btn-info"),
-                            ui.div(
-                                {"style": "display: flex; flex-direction: column; align-items: center;"},
-                                ui.div(
-                                    {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
-                                    "Count"
-                                ),
-                                ui.input_numeric("random_count", None, value=5, min=1, max=100, step=1, width="70px"),
-                            ),
-                            ui.div(
-                                {"style": "display: flex; flex-direction: column; align-items: center;"},
-                                ui.div(
-                                    {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
-                                    "Size %"
-                                ),
-                                ui.input_numeric("region_size_percent", None, value=0.2, min=0.1, max=1.0, step=0.1, width="70px"),
-                            ),
-                        ),
+                        # ui.div(
+                        #     {"style": "display: flex; gap: 5px; align-items: center;"},
+                        #     #ui.input_action_button("random_generate", "Random Generate", class_="btn-info"),
+                        #     ui.div(
+                        #         {"style": "display: flex; flex-direction: column; align-items: center;"},
+                        #         ui.div(
+                        #             {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
+                        #             "Count"
+                        #         ),
+                        #         ui.input_numeric("random_count", None, value=5, min=1, max=100, step=1, width="70px"),
+                        #     ),
+                        #     ui.div(
+                        #         {"style": "display: flex; flex-direction: column; align-items: center;"},
+                        #         ui.div(
+                        #             {"style": "font-size: 10px; color: #666; margin-bottom: 2px;"},
+                        #             "Size %"
+                        #         ),
+                        #         ui.input_numeric("region_size_percent", None, value=0.2, min=0.1, max=1.0, step=0.1, width="70px"),
+                        #     ),
+                        # ),
                         ui.input_action_button("delete_selected", "Delete Selected", class_="btn-danger"),
                         ui.input_action_button("clear_table", "Clear Table", class_="btn-secondary"),
                         ui.download_button("download_csv", "Download CSV", class_="btn-primary"),
@@ -651,7 +654,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     nufft_power_widget = reactive.Value(None)
     
     # Add reactive value to store the clicked position on NuFFT power curve for green line
-    nufft_click_position = reactive.Value(None)
+    #nufft_click_position = reactive.Value(None)
+    
+    # Flag to prevent NuFFT recalculation when apix is updated from power curve clicks
+    apix_updating_from_nufft_click = reactive.Value(False)
     
     # Add reactive value to store all drawn shapes
     drawn_shapes = reactive.Value([])
@@ -721,6 +727,14 @@ def server(input: Inputs, output: Outputs, session: Session):
         'custom_resolution': None
     })
     
+    # Add separate reactive state for NuFFT calculations
+    nufft_calculation_state = reactive.Value({
+        'region': None,
+        'apix': None,
+        'resolution_type': None,
+        'custom_resolution': None
+    })
+    
     # Update 1D plot when cached FFT image changes (removed base_fft_trigger to prevent double render)
     @reactive.Effect
     @reactive.event(cached_fft_image)
@@ -769,6 +783,13 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.Effect
     @reactive.event(input.apix_slider)
     def _():
+        click_flag = apix_updating_from_nufft_click.get()
+        print(f"🔍 APIX_SLIDER: Slider changed, apix_updating_from_nufft_click={click_flag}")
+        if click_flag:
+            # Skip updates when apix is being set from NuFFT click
+            print("🔍 APIX_SLIDER: Skipping apix_master update due to NuFFT click flag")
+            return
+        print(f"🔍 APIX_SLIDER: Setting apix_master to {input.apix_slider()}")
         apix_master.set(input.apix_slider())
         # Clear 1D plot clicked position when apix changes from slider
         #plot_1d_click_pos.set({'x': None, 'y': None})
@@ -779,6 +800,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         try:
             val = float(input.apix_exact_str())
             if 0.001 <= val <= 6.0:
+                click_flag = apix_updating_from_nufft_click.get()
+                print(f"🔍 APIX_SET: Set button pressed, apix_updating_from_nufft_click={click_flag}")
+                if click_flag:
+            # Skip updates when apix is being set from NuFFT click
+                    print("🔍 APIX_SLIDER: Skipping apix_master update due to NuFFT click flag")
+                    return
                 #apix_master.set(val)
                 ui.update_slider("apix_slider", value=val, session=session)
                 ui.update_text("apix_exact_str", value=str(round(val, 3)), session=session)
@@ -890,6 +917,14 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Clear FFT calculation state when region is cleared
         fft_calculation_state.set({
+            'region': None,
+            'apix': None,
+            'resolution_type': None,
+            'custom_resolution': None
+        })
+        
+        # Also clear NuFFT calculation state
+        nufft_calculation_state.set({
             'region': None,
             'apix': None,
             'resolution_type': None,
@@ -1633,6 +1668,14 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': None
             })
             
+            # Also clear NuFFT calculation state
+            nufft_calculation_state.set({
+                'region': None,
+                'apix': None,
+                'resolution_type': None,
+                'custom_resolution': None
+            })
+            
             # Clear all overlay storage
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
@@ -1754,6 +1797,14 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Clear FFT calculation state when a new image is loaded
             # This will make FFT displays empty until user calculates FFT for the new image
             fft_calculation_state.set({
+                'region': None,
+                'apix': None,
+                'resolution_type': None,
+                'custom_resolution': None
+            })
+            
+            # Also clear NuFFT calculation state
+            nufft_calculation_state.set({
                 'region': None,
                 'apix': None,
                 'resolution_type': None,
@@ -2397,6 +2448,14 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': input.custom_resolution()
             })
             
+            # Also store the same state for NuFFT calculations
+            nufft_calculation_state.set({
+                'region': region,
+                'apix': get_apix(),
+                'resolution_type': input.resolution_type(),
+                'custom_resolution': input.custom_resolution()
+            })
+            
             print("✅ FFT image cached successfully")
         else:
             print("❌ No region available for FFT calculation")
@@ -2405,18 +2464,22 @@ def server(input: Inputs, output: Outputs, session: Session):
     nufft_calculation_requested = reactive.Value(False)
     
     @reactive.Effect
+    @reactive.event(input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq, input.nufft_display_range, nufft_calculation_requested)
     def calculate_nufft_when_requested():
-        """Calculate NuFFT data when requested or when sampling parameters change."""
+        """Calculate NuFFT data ONLY when sampling parameters change or explicitly requested."""
+        print(f"🔍 NUFFT_CALC: Function called, nufft_calculation_requested={nufft_calculation_requested.get()}")
         if not nufft_calculation_requested.get():
+            print("🔍 NUFFT_CALC: Not requested, returning early")
             return
-            
-        # Get current slider values to make this effect reactive to changes
+        
+        # Get current slider values
         r_freq = input.nufft_r_sampling_freq()
         theta_freq = input.nufft_theta_sampling_freq()
+        display_range = input.nufft_display_range()
         
         try:
-            # Check if we have the required FFT calculation state
-            calc_state = fft_calculation_state.get()
+            # Check if we have the required NuFFT calculation state
+            calc_state = nufft_calculation_state.get()
             if calc_state['region'] is None:
                 print("❌ No region available for NuFFT calculation")
                 return
@@ -2429,23 +2492,37 @@ def server(input: Inputs, output: Outputs, session: Session):
             if target_resolution is None:
                 target_resolution = 2.13  # Default fallback
             
-            # Create ±10% range around target resolution
-            res_margin = 0.1  # 10%
-            res_low = target_resolution * (1 - res_margin)   # e.g., 2.13 * 0.9 = 1.917 Å
-            res_high = target_resolution * (1 + res_margin)  # e.g., 2.13 * 1.1 = 2.343 Å
+            # Create ±display_range% range around target resolution
+            res_margin = display_range / 100.0  # Convert percentage to fraction
+            res_low = target_resolution * (1 - res_margin)   # e.g., 2.13 * (1-0.03) = 2.066 Å
+            res_high = target_resolution * (1 + res_margin)  # e.g., 2.13 * (1+0.03) = 2.194 Å
             
             # Convert to spatial frequency (1/Å)
             freq_low = 1.0 / res_high   # 1/2.343 = 0.427 1/Å
             freq_high = 1.0 / res_low   # 1/1.917 = 0.522 1/Å
             
-            print(f"🎯 NuFFT range: {res_low:.3f} - {res_high:.3f} Å (±{res_margin*100:.0f}% around {target_resolution:.3f} Å)")
+            print(f"🔄 Recalculating NuFFT data (r_freq={r_freq}, theta_freq={theta_freq}, range={display_range}%)...")
+            print(f"🎯 NuFFT range: {res_low:.3f} - {res_high:.3f} Å (±{display_range:.1f}% around {target_resolution:.3f} Å)")
             
-            # Calculate samples from current slider values (reduce for faster calculation)
+            # Calculate samples from current slider values 
             region_size = min(calc_state['region'].size)  # Get smaller dimension
-            r_samples = min(int((0.5 * region_size) * input.nufft_r_sampling_freq()), 1000)  # Cap at 1000
-            theta_samples = min(int(360 * input.nufft_theta_sampling_freq()), 360)  # Cap at 360
+            r_samples_uncapped = int((0.5 * region_size) * r_freq)
+            theta_samples_uncapped = int(360 * theta_freq)
             
-            print(f"🔧 NuFFT calculation params: r_samples={r_samples}, theta_samples={theta_samples}, region_size={region_size}")
+            r_samples = min(r_samples_uncapped, 2000)  # Cap at 2000 for better resolution
+            theta_samples = min(theta_samples_uncapped, 720)  # Cap at 720 for better angular resolution
+            
+            # Show if capping occurred
+            r_capped = r_samples_uncapped > 2000
+            theta_capped = theta_samples_uncapped > 720
+            print(f"🔧 NuFFT calculation params:")
+            print(f"   r_samples: {r_samples}{' (CAPPED from ' + str(r_samples_uncapped) + ')' if r_capped else ''} → affects power curve smoothness")
+            print(f"   theta_samples: {theta_samples}{' (CAPPED from ' + str(theta_samples_uncapped) + ')' if theta_capped else ''} → affects heatmap angular resolution")
+            print(f"   region_size: {region_size}")
+            if r_capped:
+                print(f"   ⚠️  Radial sampling is capped - reduce r_freq slider to see changes in power curve detail")
+            if theta_capped:
+                print(f"   ⚠️  Angular sampling is capped - reduce theta_freq slider to see changes in heatmap resolution")
             
             # Process the region using NuFFT
             pwr_curve, pwr2d_raw = calibrateMag_process_one_region_advanced(
@@ -2467,7 +2544,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'apix': current_apix,
                 'target_resolution': target_resolution,
                 'freq_low': freq_low,
-                'freq_high': freq_high
+                'freq_high': freq_high,
+                'display_range': display_range
             })
             
             # Cache the NuFFT power curve data  
@@ -2481,7 +2559,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'apix': current_apix,
                 'target_resolution': target_resolution,
                 'freq_low': freq_low,
-                'freq_high': freq_high
+                'freq_high': freq_high,
+                'display_range': display_range
             })
             
             print("✅ NuFFT data calculated and cached successfully")
@@ -3098,11 +3177,12 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render_widget
     def nufft_heatmap():
         from shiny import req
-        # Require FFT calculation state to exist
-        calc_state = fft_calculation_state.get()
+        # Require NuFFT calculation state to exist
+        calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
         
         # Request NuFFT calculation if not already done
+        print("🔍 NUFFT_HEATMAP: Setting nufft_calculation_requested=True")
         nufft_calculation_requested.set(True)
         
         # Get cached data
@@ -3122,6 +3202,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         target_resolution = cached_heatmap_data['target_resolution']
         freq_low = cached_heatmap_data['freq_low']
         freq_high = cached_heatmap_data['freq_high']
+        display_range = cached_heatmap_data['display_range']
         apix_source = f"Cached Apix: {current_apix:.3f}"
         
         print(f"   pwr shape: {pwr.shape if hasattr(pwr, 'shape') else type(pwr)}")
@@ -3189,7 +3270,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             ))
             
             fig.update_layout(
-                title=f'NuFFT Analysis: ±10% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
+                title=f'NuFFT Analysis: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
                 xaxis_title='Angular Samples',
                 yaxis_title='Spatial Resolution (1/Å)', 
                 height=300,
@@ -3215,11 +3296,12 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render_widget
     def nufft_power_curve():
         from shiny import req
-        # Require FFT calculation state to exist
-        calc_state = fft_calculation_state.get()
+        # Require NuFFT calculation state to exist
+        calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
         
         # Request NuFFT calculation if not already done
+        print("🔍 NUFFT_POWER: Setting nufft_calculation_requested=True")
         nufft_calculation_requested.set(True)
         
         # Get cached data
@@ -3240,6 +3322,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         target_resolution = cached_power_data['target_resolution']
         freq_low = cached_power_data['freq_low']
         freq_high = cached_power_data['freq_high']
+        display_range = cached_power_data['display_range']
         apix_source = f"Cached Apix: {current_apix:.3f}"
         
         print(f"   pwr_curve shape: {pwr_curve.shape if hasattr(pwr_curve, 'shape') else type(pwr_curve)}")
@@ -3282,13 +3365,14 @@ def server(input: Inputs, output: Outputs, session: Session):
             else:
                 y_title = "Intensity"
             
-            # Create custom hover text
-            hover_text = []
-            for i, (freq, res, intensity) in enumerate(zip(spatial_freq_array, res_range_array, y_data)):
-                hover_info = f"Resolution: {res:.3f} Å<br>Spatial freq: {freq:.4f} Å⁻¹<br>Intensity: {intensity:.3f}"
-                hover_text.append(hover_info)
+            # Calculate tentative apix for each spatial frequency point
+            # Formula: tentative_apix = nominal_apix * (spatial_freq / target_spatial_freq)
+            # This shows what the apix would be if the highest peak were at the target resolution
+            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
+            target_spatial_freq = 1.0 / target_resolution
+            tentative_apix_array = nominal_apix * (spatial_freq_array / target_spatial_freq)
             
-            # Create the plot
+            # Create the plot with hoverable vertical dash line
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=spatial_freq_array,
@@ -3296,22 +3380,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                 mode='lines',
                 name='Power Curve',
                 line=dict(color='blue', width=2),
-                hovertemplate='%{text}<extra></extra>',
-                text=hover_text
+                hovertemplate='<b>Resolution:</b> %{customdata[0]:.3f} Å<br>' +
+                             '<b>Spatial Freq:</b> %{x:.4f} Å⁻¹<br>' +
+                             '<b>Intensity:</b> %{y:.3f}<br>' +
+                             '<b>Tentative Apix:</b> %{customdata[1]:.4f} Å/px<extra></extra>',
+                customdata=np.column_stack([res_range_array, tentative_apix_array])
             ))
             
             # Removed target resolution line - no longer needed
-            
-            # Add green vertical line at clicked position if available
-            clicked_pos = nufft_click_position.get()
-            if clicked_pos is not None:
-                clicked_resolution = 1.0 / clicked_pos if clicked_pos > 0 else 0
-                fig.add_vline(
-                    x=clicked_pos,
-                    line_color="green",
-                    line_width=2,
-                    #annotation_text=f"Clicked: {clicked_resolution:.2f}Å"
-                )
+            # Note: Green vertical line for clicks is now added directly in click handler
             
             # Create tick values and labels for spatial frequency x-axis
             n_ticks = min(6, len(spatial_freq_array))  # Maximum 6 ticks
@@ -3330,7 +3407,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 x_ticktext = []
             
             fig.update_layout(
-                title=f'NuFFT Power Curve: ±10% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
+                title=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
                 xaxis_title='Spatial Resolution (1/Å)',
                 yaxis_title=y_title,
                 #height=200,
@@ -3338,10 +3415,20 @@ def server(input: Inputs, output: Outputs, session: Session):
                 margin=dict(l=60, r=20, t=40, b=60),
                 autosize=False,
                 showlegend=False,
+                hovermode='x unified',  # Show unified hover with vertical line
                 xaxis=dict(
                     tickvals=x_tickvals,
                     ticktext=x_ticktext,
-                    tickmode='array'
+                    tickmode='array',
+                    showspikes=True,  # Enable vertical spike line on hover
+                    spikecolor="rgba(0,0,0,0.5)",  # Dark gray with transparency
+                    spikesnap="cursor",  # Snap spike to cursor position
+                    spikemode="across",  # Show spike across entire plot
+                    spikethickness=2,  # Thickness of spike line
+                    spikedash="dash"  # Dashed spike line
+                ),
+                yaxis=dict(
+                    showspikes=False  # Disable horizontal spikes
                 )
             )
             
@@ -3389,7 +3476,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             return
         
         # Get the current data to enable click info extraction
-        calc_state = fft_calculation_state.get()
+        calc_state = nufft_calculation_state.get()
         if calc_state['region'] is None:
             return
             
@@ -3399,72 +3486,29 @@ def server(input: Inputs, output: Outputs, session: Session):
                 try:
                     # Get clicked point information
                     point_idx = points.point_inds[0]
-                    x_val = points.xs[0] if points.xs else None  # Spatial frequency
-                    y_val = points.ys[0] if points.ys else None  # Power value
                     
-                    # Get hover text from the trace data, not the points object
-                    hover_info = "No hover info"
-                    if hasattr(trace, 'text') and trace.text and point_idx < len(trace.text):
-                        hover_info = trace.text[point_idx]
+                    # Get the tentative apix from the hover data (customdata)
+                    tentative_apix = None
+                    if hasattr(trace, 'customdata') and trace.customdata is not None and point_idx < len(trace.customdata):
+                        tentative_apix = trace.customdata[point_idx][1]  # Second column is tentative apix
                     
-                    # Print click information to console
-                    print("=== NuFFT Power Curve Click Info ===")
-                    print(f"Point Index: {point_idx}")
-                    print(f"Spatial Frequency: {x_val:.6f} 1/Å" if x_val else "Spatial Frequency: N/A")
-                    print(f"Power Value: {y_val:.6f}" if y_val else "Power Value: N/A")
-                    print(f"Hover Info: {hover_info}")
-                    
-                    # Calculate resolution from spatial frequency if available
-                    if x_val and x_val > 0:
-                        resolution = 1.0 / x_val
-                        print(f"Resolution: {resolution:.3f} Å")
+                    if tentative_apix is not None:
+                        print("=== NuFFT Power Curve Click ===")
+                        print(f"🎯 CLICK: Setting apix to: {tentative_apix:.6f} Å/px")
                         
-                        # Get the target resolution from current settings
-                        calc_state = fft_calculation_state.get()
-                        target_resolution, _ = get_resolution_info(
-                            calc_state['resolution_type'], 
-                            calc_state['custom_resolution']
-                        )
+                        # No need to prevent NuFFT recalculation - it's not reactive to apix changes anymore
+                        print("🔧 CLICK: NuFFT calc is not reactive to apix, no blocking needed")
                         
-                        # Calculate required apix to move clicked position to target resolution
-                        # ALWAYS use nominal apix as base to avoid drift when clicking repeatedly
-                        nominal_apix = float(input.nominal_apix())
-                        current_apix = get_apix()
-                        target_spatial_freq = 1.0 / target_resolution
+                        # Update the apix slider directly to the tentative apix value
+                        print("🔧 CLICK: Updating apix text input")
+                        ui.update_text("apix_exact_str", value=f"{tentative_apix:.6f}")
+                        print("🔧 CLICK: Updating apix slider")
+                        ui.update_slider("apix_slider", value=tentative_apix)
                         
-                        # The relationship is: spatial_freq = freq_in_pixels / (image_size * apix)
-                        # We want: target_spatial_freq = clicked_freq_ratio * (1 / (image_size * new_apix))
-                        # So: new_apix = nominal_apix * (x_val / target_spatial_freq)
-                        new_apix = nominal_apix * (x_val / target_spatial_freq)
+                        print("✅ CLICK: Apix UI updates complete")
+                    else:
+                        print("❌ Could not extract tentative apix from hover data")
                         
-                        print(f"Nominal apix: {nominal_apix:.6f} Å/px")
-                        print(f"Current apix: {current_apix:.6f} Å/px")
-                        print(f"Target resolution: {target_resolution:.3f} Å")
-                        print(f"Target spatial freq: {target_spatial_freq:.6f} 1/Å")
-                        print(f"Calculated new apix: {new_apix:.6f} Å/px")
-                        
-                        # Update the apix slider to the calculated value
-                        # First update the exact text input
-                        ui.update_text("apix_exact_str", value=f"{new_apix:.6f}")
-                        
-                        # Then trigger the set button action programmatically by updating the slider
-                        # Clamp to slider bounds
-                        slider_min = 0.01
-                        slider_max = 2.0
-                        clamped_apix = max(slider_min, min(slider_max, new_apix))
-                        
-                        ui.update_slider("apix_slider", value=clamped_apix)
-                        
-                        if new_apix != clamped_apix:
-                            print(f"Note: Apix clamped to slider range [{slider_min}-{slider_max}]: {clamped_apix:.6f}")
-                        
-                        print(f"Apix updated to align clicked position with {target_resolution:.3f} Å target")
-                        
-                        # Store the clicked position for green line visualization
-                        nufft_click_position.set(x_val)
-                    
-                    print("=====================================")
-                    
                 except Exception as e:
                     print(f"Error processing NuFFT power curve click: {e}")
                     import traceback
@@ -3896,166 +3940,166 @@ def server(input: Inputs, output: Outputs, session: Session):
                 widget.layout.autosize = True
                 widget.layout.height = None
 
-    @reactive.Effect
-    @reactive.event(input.random_generate)
-    def _():
-        """Generate random regions from the image and analyze them."""
-        try:
-            # Check if we have an image loaded
-            original_data = original_image_data.get()
-            if original_data is None:
-                print("No image loaded for random generation")
-                return
+    # @reactive.Effect
+    # @reactive.event(input.random_generate)
+    # def _():
+    #     """Generate random regions from the image and analyze them."""
+    #     try:
+    #         # Check if we have an image loaded
+    #         original_data = original_image_data.get()
+    #         if original_data is None:
+    #             print("No image loaded for random generation")
+    #             return
             
-            filename = image_filename.get() or "Unknown"
-            num_regions = input.random_count()
+    #         filename = image_filename.get() or "Unknown"
+    #         num_regions = input.random_count()
             
-            if num_regions <= 0:
-                print("Number of regions must be greater than 0")
-                return
+    #         if num_regions <= 0:
+    #             print("Number of regions must be greater than 0")
+    #             return
             
-            # Calculate region size based on percentage of image
-            img_height, img_width = original_data.shape
-            region_size_percent = input.region_size_percent()
-            region_size = int(min(img_width, img_height) * region_size_percent)
+    #         # Calculate region size based on percentage of image
+    #         img_height, img_width = original_data.shape
+    #         region_size_percent = input.region_size_percent()
+    #         region_size = int(min(img_width, img_height) * region_size_percent)
             
-            print(f"=== GENERATING {num_regions} RANDOM {region_size}x{region_size} REGIONS ===")
-            print(f"Original image shape: {original_data.shape}")
-            print(f"Region size percentage: {region_size_percent:.1f} ({region_size}x{region_size} pixels)")
-            print(f"Filename: {filename}")
+    #         print(f"=== GENERATING {num_regions} RANDOM {region_size}x{region_size} REGIONS ===")
+    #         print(f"Original image shape: {original_data.shape}")
+    #         print(f"Region size percentage: {region_size_percent:.1f} ({region_size}x{region_size} pixels)")
+    #         print(f"Filename: {filename}")
             
-            # Check if image is large enough for calculated region size
-            if img_height < region_size or img_width < region_size:
-                print(f"Image too small ({img_width}x{img_height}) for {region_size}x{region_size} regions")
-                return
+    #         # Check if image is large enough for calculated region size
+    #         if img_height < region_size or img_width < region_size:
+    #             print(f"Image too small ({img_width}x{img_height}) for {region_size}x{region_size} regions")
+    #             return
             
-            # Calculate valid coordinate ranges (ensure regions stay within boundaries)
-            # Convert to Python integers to avoid numpy.float64 issues
-            max_x = int(img_width - region_size)
-            max_y = int(img_height - region_size)
+    #         # Calculate valid coordinate ranges (ensure regions stay within boundaries)
+    #         # Convert to Python integers to avoid numpy.float64 issues
+    #         max_x = int(img_width - region_size)
+    #         max_y = int(img_height - region_size)
             
-            print(f"Valid coordinate ranges: x=[0, {max_x}], y=[0, {max_y}]")
+    #         print(f"Valid coordinate ranges: x=[0, {max_x}], y=[0, {max_y}]")
             
-            # Generate random regions and analyze each one
-            import random
-            successful_regions = 0
+    #         # Generate random regions and analyze each one
+    #         import random
+    #         successful_regions = 0
             
-            for i in range(num_regions):
-                try:
-                    # Generate random top-left coordinates (ensure integers)
-                    x0 = int(random.randint(0, max_x))
-                    y0 = int(random.randint(0, max_y))
-                    x1 = int(x0 + region_size)
-                    y1 = int(y0 + region_size)
+    #         for i in range(num_regions):
+    #             try:
+    #                 # Generate random top-left coordinates (ensure integers)
+    #                 x0 = int(random.randint(0, max_x))
+    #                 y0 = int(random.randint(0, max_y))
+    #                 x1 = int(x0 + region_size)
+    #                 y1 = int(y0 + region_size)
                     
-                    print(f"\nRegion {i+1}/{num_regions}: x=[{x0}, {x1}], y=[{y0}, {y1}]")
-                    print(f"Types: x0={type(x0)}, y0={type(y0)}, x1={type(x1)}, y1={type(y1)}")
+    #                 print(f"\nRegion {i+1}/{num_regions}: x=[{x0}, {x1}], y=[{y0}, {y1}]")
+    #                 print(f"Types: x0={type(x0)}, y0={type(y0)}, x1={type(x1)}, y1={type(y1)}")
                     
-                    # Extract the region from original image with explicit type checking
-                    try:
-                        region_data = original_data[y0:y1, x0:x1]
-                        print(f"Region data shape: {region_data.shape}, dtype: {region_data.dtype}")
+    #                 # Extract the region from original image with explicit type checking
+    #                 try:
+    #                     region_data = original_data[y0:y1, x0:x1]
+    #                     print(f"Region data shape: {region_data.shape}, dtype: {region_data.dtype}")
                         
-                        # Ensure data is in correct format for PIL
-                        region_data_clean = region_data.astype(np.uint8)
-                        region_img = Image.fromarray(region_data_clean)
+    #                     # Ensure data is in correct format for PIL
+    #                     region_data_clean = region_data.astype(np.uint8)
+    #                     region_img = Image.fromarray(region_data_clean)
                         
-                        print(f"Extracted region size: {region_img.size}")
+    #                     print(f"Extracted region size: {region_img.size}")
                         
-                    except Exception as e:
-                        print(f"Error extracting region: {e}")
-                        print(f"Coordinate types: x0={type(x0)}, y0={type(y0)}")
-                        raise e
+    #                 except Exception as e:
+    #                     print(f"Error extracting region: {e}")
+    #                     print(f"Coordinate types: x0={type(x0)}, y0={type(y0)}")
+    #                     raise e
                     
-                    # Compute 1D FFT radial profile with detrending
-                    try:
-                        # Convert current apix to float to avoid numpy type issues
-                        current_apix = float(get_apix())
-                        current_resolution_type = str(input.resolution_type())
-                        current_custom_resolution = float(input.custom_resolution()) if input.custom_resolution() else None
+    #                 # Compute 1D FFT radial profile with detrending
+    #                 try:
+    #                     # Convert current apix to float to avoid numpy type issues
+    #                     current_apix = float(get_apix())
+    #                     current_resolution_type = str(input.resolution_type())
+    #                     current_custom_resolution = float(input.custom_resolution()) if input.custom_resolution() else None
                         
-                        plot_data = compute_fft_1d_data(
-                            region=region_img,
-                            apix=current_apix,
-                            use_mean_profile=False,  # Use standard radial average
-                            log_y=False,  # Use linear scale
-                            smooth=False,  # No smoothing
-                            window_size=int(3),  # Ensure integer
-                            detrend=True,  # Enable detrending as requested
-                            resolution_type=current_resolution_type,
-                            custom_resolution=current_custom_resolution
-                        )
+    #                     plot_data = compute_fft_1d_data(
+    #                         region=region_img,
+    #                         apix=current_apix,
+    #                         use_mean_profile=False,  # Use standard radial average
+    #                         log_y=False,  # Use linear scale
+    #                         smooth=False,  # No smoothing
+    #                         window_size=int(3),  # Ensure integer
+    #                         detrend=True,  # Enable detrending as requested
+    #                         resolution_type=current_resolution_type,
+    #                         custom_resolution=current_custom_resolution
+    #                     )
                         
-                    except Exception as e:
-                        print(f"Error in compute_fft_1d_data: {e}")
-                        raise e
+    #                 except Exception as e:
+    #                     print(f"Error in compute_fft_1d_data: {e}")
+    #                     raise e
                     
-                    if plot_data is None:
-                        print(f"Failed to compute FFT for region {i+1}")
-                        continue
+    #                 if plot_data is None:
+    #                     print(f"Failed to compute FFT for region {i+1}")
+    #                     continue
                     
-                    # Find the maximum in the detrended signal
-                    x_data = plot_data['x_data']
-                    y_data = plot_data['y_data']
+    #                 # Find the maximum in the detrended signal
+    #                 x_data = plot_data['x_data']
+    #                 y_data = plot_data['y_data']
                     
-                    if len(y_data) == 0:
-                        print(f"No data points for region {i+1}")
-                        continue
+    #                 if len(y_data) == 0:
+    #                     print(f"No data points for region {i+1}")
+    #                     continue
                     
-                    max_idx = np.argmax(y_data)
-                    fft_max_x = x_data[max_idx]
-                    fft_max_y = y_data[max_idx]
+    #                 max_idx = np.argmax(y_data)
+    #                 fft_max_x = x_data[max_idx]
+    #                 fft_max_y = y_data[max_idx]
                     
-                    print(f"Found maximum at x={fft_max_x:.3f}, y={fft_max_y:.3f}")
+    #                 print(f"Found maximum at x={fft_max_x:.3f}, y={fft_max_y:.3f}")
                     
-                    # Calculate apix from the maximum position
-                    resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
-                    if resolution is not None and fft_max_x > 0:
-                        calculated_apix = (fft_max_x * resolution) / region_size
+    #                 # Calculate apix from the maximum position
+    #                 resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+    #                 if resolution is not None and fft_max_x > 0:
+    #                     calculated_apix = (fft_max_x * resolution) / region_size
                         
-                        if 0.01 <= calculated_apix <= 6.0:
-                            print(f"Calculated apix: {calculated_apix:.3f} Å/px")
+    #                     if 0.01 <= calculated_apix <= 6.0:
+    #                         print(f"Calculated apix: {calculated_apix:.3f} Å/px")
                             
-                            # Create table entry
-                            region_location = f"x:{x0}–{x1}, y:{y0}–{y1}"
-                            region_size_str = f"{region_size}×{region_size} px"
+    #                         # Create table entry
+    #                         region_location = f"x:{x0}–{x1}, y:{y0}–{y1}"
+    #                         region_size_str = f"{region_size}×{region_size} px"
                             
-                            # Get nominal value from textbox
-                            nominal_value = float(input.nominal_apix())
+    #                         # Get nominal value from textbox
+    #                         nominal_value = float(input.nominal_apix())
                             
-                            new_row = pd.DataFrame({
-                                'Filename': [filename],
-                                'Region Size': [region_size_str],
-                                'Region Location': [region_location],
-                                'Apix': [f"{calculated_apix:.3f}"],
-                                'Nominal': [nominal_value]
-                            })
+    #                         new_row = pd.DataFrame({
+    #                             'Filename': [filename],
+    #                             'Region Size': [region_size_str],
+    #                             'Region Location': [region_location],
+    #                             'Apix': [f"{calculated_apix:.3f}"],
+    #                             'Nominal': [nominal_value]
+    #                         })
                             
-                            # Add to existing table data
-                            current_data = region_table_data.get()
-                            updated_data = pd.concat([current_data, new_row], ignore_index=True)
-                            region_table_data.set(updated_data)
+    #                         # Add to existing table data
+    #                         current_data = region_table_data.get()
+    #                         updated_data = pd.concat([current_data, new_row], ignore_index=True)
+    #                         region_table_data.set(updated_data)
                             
-                            successful_regions += 1
-                            print(f"Added region {i+1} to table: {filename}, {region_size_str}, {region_location}, {calculated_apix:.3f}, {nominal_value}")
+    #                         successful_regions += 1
+    #                         print(f"Added region {i+1} to table: {filename}, {region_size_str}, {region_location}, {calculated_apix:.3f}, {nominal_value}")
                             
-                        else:
-                            print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
-                    else:
-                        print(f"Could not calculate apix for region {i+1}")
+    #                     else:
+    #                         print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
+    #                 else:
+    #                     print(f"Could not calculate apix for region {i+1}")
                         
-                except Exception as e:
-                    print(f"Error processing region {i+1}: {e}")
-                    continue
+    #             except Exception as e:
+    #                 print(f"Error processing region {i+1}: {e}")
+    #                 continue
             
-            print(f"\n=== RANDOM GENERATION COMPLETE ===")
-            print(f"Successfully analyzed {successful_regions}/{num_regions} regions")
-            print(f"Total table entries: {len(region_table_data.get())}")
+    #         print(f"\n=== RANDOM GENERATION COMPLETE ===")
+    #         print(f"Successfully analyzed {successful_regions}/{num_regions} regions")
+    #         print(f"Total table entries: {len(region_table_data.get())}")
             
-        except Exception as e:
-            print(f"Error in random generation: {e}")
-            import traceback
-            traceback.print_exc()
+    #     except Exception as e:
+    #         print(f"Error in random generation: {e}")
+    #         import traceback
+    #         traceback.print_exc()
 
     @reactive.Effect
     @reactive.event(input.delete_selected)
@@ -4160,11 +4204,13 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(apix_master)
     def _():
         val = apix_master.get()
+        print(f"🔍 APIX_MASTER: apix_master changed to {val}")
         
         # Only update if the change is significant (>= 0.001)
         # This prevents unnecessary updates for tiny changes
         current_slider_val = input.apix_slider()
         if abs(val - current_slider_val) < 0.001:
+            print(f"🔍 APIX_MASTER: Change too small ({abs(val - current_slider_val)}), skipping")
             return
             
         # Update UI controls
@@ -4293,401 +4339,401 @@ def server(input: Inputs, output: Outputs, session: Session):
     #     pass
     #     """Handle Find Max button click to find and mark the global maximum in the current view."""
         # Get the 1D plot widget
-        widget = fft_1d_widget.get()
-        if widget is None or len(widget.data) == 0:
-            return
+        # widget = fft_1d_widget.get()
+        # if widget is None or len(widget.data) == 0:
+        #     return
         
-        # Get the current plot data (already processed with smoothing/detrending)
-        plot_data = fft_1d_data()
-        if plot_data is None:
-            return
+        # # Get the current plot data (already processed with smoothing/detrending)
+        # plot_data = fft_1d_data()
+        # if plot_data is None:
+        #     return
         
-        x_data = plot_data['x_data']
-        y_data = plot_data['y_data']
+        # x_data = plot_data['x_data']
+        # y_data = plot_data['y_data']
         
-        # Get the current zoom range from the widget
-        x_range = widget.layout.xaxis.range
+        # # Get the current zoom range from the widget
+        # x_range = widget.layout.xaxis.range
         
-        # If zoomed, filter data to the visible range
-        if x_range is not None and len(x_range) == 2:
-            x_min, x_max = x_range
-            # Find indices within the visible range
-            mask = (x_data >= x_min) & (x_data <= x_max)
-            if np.any(mask):
-                visible_x = x_data[mask]
-                visible_y = y_data[mask]
-            else:
-                # No data in range, use all data
-                visible_x = x_data
-                visible_y = y_data
-        else:
-            # Not zoomed, use all data
-            visible_x = x_data
-            visible_y = y_data
+        # # If zoomed, filter data to the visible range
+        # if x_range is not None and len(x_range) == 2:
+        #     x_min, x_max = x_range
+        #     # Find indices within the visible range
+        #     mask = (x_data >= x_min) & (x_data <= x_max)
+        #     if np.any(mask):
+        #         visible_x = x_data[mask]
+        #         visible_y = y_data[mask]
+        #     else:
+        #         # No data in range, use all data
+        #         visible_x = x_data
+        #         visible_y = y_data
+        # else:
+        #     # Not zoomed, use all data
+        #     visible_x = x_data
+        #     visible_y = y_data
         
-        # Find the global maximum in the visible range
-        if len(visible_y) > 0:
-            # Find integer maximum first
-            max_idx = np.argmax(visible_y)
-            max_x_int = visible_x[max_idx]
-            max_y_int = visible_y[max_idx]
+        # # Find the global maximum in the visible range
+        # if len(visible_y) > 0:
+        #     # Find integer maximum first
+        #     max_idx = np.argmax(visible_y)
+        #     max_x_int = visible_x[max_idx]
+        #     max_y_int = visible_y[max_idx]
             
-            print(f"Integer maximum found at x={max_x_int:.3f}, y={max_y_int:.3f}")
+        #     print(f"Integer maximum found at x={max_x_int:.3f}, y={max_y_int:.3f}")
             
-            # Check if Super Resolution mode is enabled
-            if input.super_resolution():
-                # Super Resolution mode: Fit Gaussian around the maximum for sub-pixel precision
-                try:
-                    # Get window size from slider (convert to half-window for ± range)
-                    window_half_size = input.gaussian_window() / 2.0
+        #     # Check if Super Resolution mode is enabled
+        #     if input.super_resolution():
+        #         # Super Resolution mode: Fit Gaussian around the maximum for sub-pixel precision
+        #         try:
+        #             # Get window size from slider (convert to half-window for ± range)
+        #             window_half_size = input.gaussian_window() / 2.0
                     
-                    # Find indices within window around the maximum
-                    mask = np.abs(visible_x - max_x_int) <= window_half_size
+        #             # Find indices within window around the maximum
+        #             mask = np.abs(visible_x - max_x_int) <= window_half_size
                     
-                    if np.sum(mask) >= 5:  # Need at least 5 points for Gaussian fitting
-                        fit_x = visible_x[mask]
-                        fit_y = visible_y[mask]
+        #             if np.sum(mask) >= 5:  # Need at least 5 points for Gaussian fitting
+        #                 fit_x = visible_x[mask]
+        #                 fit_y = visible_y[mask]
                         
-                        # Define Gaussian function: y = a * exp(-((x - mu)^2) / (2 * sigma^2)) + c
-                        def gaussian(x, a, mu, sigma, c):
-                            return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+        #                 # Define Gaussian function: y = a * exp(-((x - mu)^2) / (2 * sigma^2)) + c
+        #                 def gaussian(x, a, mu, sigma, c):
+        #                     return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
                         
-                        # Initial parameter guesses
-                        a_guess = max_y_int  # amplitude
-                        mu_guess = max_x_int  # center
-                        sigma_guess = 1.0     # width
-                        c_guess = np.min(fit_y)  # offset
+        #                 # Initial parameter guesses
+        #                 a_guess = max_y_int  # amplitude
+        #                 mu_guess = max_x_int  # center
+        #                 sigma_guess = 1.0     # width
+        #                 c_guess = np.min(fit_y)  # offset
                         
-                        # Fit the Gaussian
-                        from scipy.optimize import curve_fit
-                        popt, _ = curve_fit(gaussian, fit_x, fit_y, 
-                                          p0=[a_guess, mu_guess, sigma_guess, c_guess],
-                                          maxfev=1000)
+        #                 # Fit the Gaussian
+        #                 from scipy.optimize import curve_fit
+        #                 popt, _ = curve_fit(gaussian, fit_x, fit_y, 
+        #                                   p0=[a_guess, mu_guess, sigma_guess, c_guess],
+        #                                   maxfev=1000)
                         
-                        # Extract fitted parameters
-                        a_fit, mu_fit, sigma_fit, c_fit = popt
+        #                 # Extract fitted parameters
+        #                 a_fit, mu_fit, sigma_fit, c_fit = popt
                         
-                        # Use the fitted center as the refined maximum position
-                        max_x = mu_fit
-                        max_y = gaussian(mu_fit, *popt)
+        #                 # Use the fitted center as the refined maximum position
+        #                 max_x = mu_fit
+        #                 max_y = gaussian(mu_fit, *popt)
                         
-                        print(f"Super Resolution: Gaussian fit successful with {input.gaussian_window()}-pixel window")
-                        print(f"  - Center: {mu_fit:.5f}, Amplitude: {a_fit:.3f}, Sigma: {sigma_fit:.3f}")
-                        print(f"  - Sub-pixel maximum: x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
+        #                 print(f"Super Resolution: Gaussian fit successful with {input.gaussian_window()}-pixel window")
+        #                 print(f"  - Center: {mu_fit:.5f}, Amplitude: {a_fit:.3f}, Sigma: {sigma_fit:.3f}")
+        #                 print(f"  - Sub-pixel maximum: x={max_x:.5f}, y={max_y:.3f} (refined from {max_x_int:.3f})")
                         
-                        # Store Gaussian parameters for overlay
-                        gaussian_params = popt
-                        gaussian_fit_range = (fit_x.min(), fit_x.max())
+        #                 # Store Gaussian parameters for overlay
+        #                 gaussian_params = popt
+        #                 gaussian_fit_range = (fit_x.min(), fit_x.max())
                         
-                    else:
-                        # Not enough points for fitting, use integer maximum
-                        max_x = max_x_int
-                        max_y = max_y_int
-                        gaussian_params = None
-                        gaussian_fit_range = None
-                        print(f"Super Resolution: Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
+        #             else:
+        #                 # Not enough points for fitting, use integer maximum
+        #                 max_x = max_x_int
+        #                 max_y = max_y_int
+        #                 gaussian_params = None
+        #                 gaussian_fit_range = None
+        #                 print(f"Super Resolution: Not enough points for Gaussian fitting ({np.sum(mask)} points), using integer maximum")
                         
-                except Exception as e:
-                    # Gaussian fitting failed, use integer maximum
-                    max_x = max_x_int
-                    max_y = max_y_int
-                    gaussian_params = None
-                    gaussian_fit_range = None
-                    print(f"Super Resolution: Gaussian fitting failed ({e}), using integer maximum")
-            else:
-                # Standard mode: Use integer maximum
-                max_x = max_x_int
-                max_y = max_y_int
-                gaussian_params = None
-                gaussian_fit_range = None
-                print(f"Standard resolution mode: Using integer maximum")
+        #         except Exception as e:
+        #             # Gaussian fitting failed, use integer maximum
+        #             max_x = max_x_int
+        #             max_y = max_y_int
+        #             gaussian_params = None
+        #             gaussian_fit_range = None
+        #             print(f"Super Resolution: Gaussian fitting failed ({e}), using integer maximum")
+        #     else:
+        #         # Standard mode: Use integer maximum
+        #         max_x = max_x_int
+        #         max_y = max_y_int
+        #         gaussian_params = None
+        #         gaussian_fit_range = None
+        #         print(f"Standard resolution mode: Using integer maximum")
             
-            # Calculate apix value corresponding to the maximum position
-            calculated_apix = None
-            calc_state = fft_calculation_state.get()
-            if calc_state['region'] is not None:
-                resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
-                if resolution is not None and max_x > 0:
-                    # Convert from 1D plot coordinates to FFT image coordinates
-                    region_size = calc_state['region'].size[0]
+        #     # Calculate apix value corresponding to the maximum position
+        #     calculated_apix = None
+        #     calc_state = fft_calculation_state.get()
+        #     if calc_state['region'] is not None:
+        #         resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
+        #         if resolution is not None and max_x > 0:
+        #             # Convert from 1D plot coordinates to FFT image coordinates
+        #             region_size = calc_state['region'].size[0]
                     
-                    # Calculate apix using the resolution and distance
-                    # Formula: apix = (distance_in_pixels * resolution) / image_size
-                    calculated_apix = (max_x * resolution) / region_size
+        #             # Calculate apix using the resolution and distance
+        #             # Formula: apix = (distance_in_pixels * resolution) / image_size
+        #             calculated_apix = (max_x * resolution) / region_size
                     
-                    if 0.01 <= calculated_apix <= 6.0:
-                        # Update the apix slider and text input with the calculated value
-                        ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
-                        if input.super_resolution():
-                            print(f"Updated apix to {calculated_apix:.3f} Å/px based on Gaussian-fitted maximum at x={max_x:.5f}")
-                        else:
-                            print(f"Updated apix to {calculated_apix:.3f} Å/px based on integer maximum at x={max_x:.3f}")
-                    else:
-                        print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
-                        calculated_apix = None  # Mark as invalid
-                else:
-                    print("Could not calculate apix - no resolution or invalid max position")
-            else:
-                print("Could not calculate apix - no FFT calculation state available")
+        #             if 0.01 <= calculated_apix <= 6.0:
+        #                 # Update the apix slider and text input with the calculated value
+        #                 ui.update_slider("apix_slider", value=calculated_apix, session=session)
+        #                 ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
+        #                 if input.super_resolution():
+        #                     print(f"Updated apix to {calculated_apix:.3f} Å/px based on Gaussian-fitted maximum at x={max_x:.5f}")
+        #                 else:
+        #                     print(f"Updated apix to {calculated_apix:.3f} Å/px based on integer maximum at x={max_x:.3f}")
+        #             else:
+        #                 print(f"Calculated apix {calculated_apix:.3f} is outside valid range [0.01, 6.0]")
+        #                 calculated_apix = None  # Mark as invalid
+        #         else:
+        #             print("Could not calculate apix - no resolution or invalid max position")
+        #     else:
+        #         print("Could not calculate apix - no FFT calculation state available")
             
-            # ALWAYS add vertical line at max position regardless of apix calculation success
-            print(f"Adding vertical line at max position x={max_x:.5f}, y={max_y:.3f}")
+        #     # ALWAYS add vertical line at max position regardless of apix calculation success
+        #     print(f"Adding vertical line at max position x={max_x:.5f}, y={max_y:.3f}")
             
-            try:
-                with widget.batch_update():
-                    # Remove any existing max markers and Gaussian fits
-                    traces_to_keep = []
-                    removed_count = 0
-                    for trace in widget.data:
-                        if not (hasattr(trace, 'name') and (trace.name == 'max_marker' or trace.name == 'gaussian_fit')):
-                            traces_to_keep.append(trace)
-                        else:
-                            removed_count += 1
-                    widget.data = traces_to_keep
-                    print(f"Removed {removed_count} existing max markers and Gaussian fits")
+        #     try:
+        #         with widget.batch_update():
+        #             # Remove any existing max markers and Gaussian fits
+        #             traces_to_keep = []
+        #             removed_count = 0
+        #             for trace in widget.data:
+        #                 if not (hasattr(trace, 'name') and (trace.name == 'max_marker' or trace.name == 'gaussian_fit')):
+        #                     traces_to_keep.append(trace)
+        #                 else:
+        #                     removed_count += 1
+        #             widget.data = traces_to_keep
+        #             print(f"Removed {removed_count} existing max markers and Gaussian fits")
                     
-                    # Get current visible range from widget (what user is actually seeing)
-                    current_x_range = widget.layout.xaxis.range
-                    current_y_range = widget.layout.yaxis.range
+        #             # Get current visible range from widget (what user is actually seeing)
+        #             current_x_range = widget.layout.xaxis.range
+        #             current_y_range = widget.layout.yaxis.range
                     
-                    print(f"Current x-axis range: {current_x_range}")
-                    print(f"Current y-axis range: {current_y_range}")
-                    print(f"Max position to mark: x={max_x:.3f}")
+        #             print(f"Current x-axis range: {current_x_range}")
+        #             print(f"Current y-axis range: {current_y_range}")
+        #             print(f"Max position to mark: x={max_x:.3f}")
                     
-                    # Determine y-axis range for the vertical line
-                    if current_y_range is not None and len(current_y_range) == 2:
-                        y_min, y_max_range = current_y_range
-                        print(f"Using current y-axis range: [{y_min:.1f}, {y_max_range:.1f}]")
-                    else:
-                        # Fallback: use data range with padding
-                        y_min = min(0, np.min(y_data) * 0.9)
-                        y_max_range = np.max(y_data) * 1.1
-                        print(f"Using calculated y-axis range: [{y_min:.1f}, {y_max_range:.1f}]")
-                        # Update layout range
-                        widget.layout.yaxis.range = [y_min, y_max_range]
+        #             # Determine y-axis range for the vertical line
+        #             if current_y_range is not None and len(current_y_range) == 2:
+        #                 y_min, y_max_range = current_y_range
+        #                 print(f"Using current y-axis range: [{y_min:.1f}, {y_max_range:.1f}]")
+        #             else:
+        #                 # Fallback: use data range with padding
+        #                 y_min = min(0, np.min(y_data) * 0.9)
+        #                 y_max_range = np.max(y_data) * 1.1
+        #                 print(f"Using calculated y-axis range: [{y_min:.1f}, {y_max_range:.1f}]")
+        #                 # Update layout range
+        #                 widget.layout.yaxis.range = [y_min, y_max_range]
                     
-                    # Check if max_x is within visible range
-                    if current_x_range is not None and len(current_x_range) == 2:
-                        x_min_range, x_max_range = current_x_range
-                        if not (x_min_range <= max_x <= x_max_range):
-                            print(f"WARNING: max_x={max_x:.3f} is outside visible x-range [{x_min_range:.3f}, {x_max_range:.3f}]")
+        #             # Check if max_x is within visible range
+        #             if current_x_range is not None and len(current_x_range) == 2:
+        #                 x_min_range, x_max_range = current_x_range
+        #                 if not (x_min_range <= max_x <= x_max_range):
+        #                     print(f"WARNING: max_x={max_x:.3f} is outside visible x-range [{x_min_range:.3f}, {x_max_range:.3f}]")
                     
-                    # Create hover info with apix if available
-                    if input.super_resolution() and gaussian_params is not None:
-                        # Super resolution mode with successful Gaussian fit
-                        if calculated_apix is not None:
-                            hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
-                        else:
-                            hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<extra></extra>'
-                    else:
-                        # Standard resolution mode
-                        if calculated_apix is not None:
-                            hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
-                        else:
-                            hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<extra></extra>'
+        #             # Create hover info with apix if available
+        #             if input.super_resolution() and gaussian_params is not None:
+        #                 # Super resolution mode with successful Gaussian fit
+        #                 if calculated_apix is not None:
+        #                     hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+        #                 else:
+        #                     hover_info = f'<b>Global Max (Super Resolution)</b><br>x: {max_x:.5f}<br>y: {max_y:.3f}<extra></extra>'
+        #             else:
+        #                 # Standard resolution mode
+        #                 if calculated_apix is not None:
+        #                     hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<br>Apix: {calculated_apix:.3f} Å/px<extra></extra>'
+        #                 else:
+        #                     hover_info = f'<b>Global Max (Standard)</b><br>x: {max_x:.3f}<br>y: {max_y:.3f}<extra></extra>'
                     
-                    # Add new vertical line at max position with enhanced visibility
-                    line_trace = go.Scatter(
-                        x=[max_x, max_x],
-                        y=[y_min, y_max_range],
-                        mode='lines',
-                        line=dict(color='red', width=1, dash='solid'),  # Slim vertical line
-                        name='max_marker',
-                        showlegend=False,
-                        hovertemplate=hover_info,
-                        opacity=1.0  # Ensure full opacity
-                    )
+        #             # Add new vertical line at max position with enhanced visibility
+        #             line_trace = go.Scatter(
+        #                 x=[max_x, max_x],
+        #                 y=[y_min, y_max_range],
+        #                 mode='lines',
+        #                 line=dict(color='red', width=1, dash='solid'),  # Slim vertical line
+        #                 name='max_marker',
+        #                 showlegend=False,
+        #                 hovertemplate=hover_info,
+        #                 opacity=1.0  # Ensure full opacity
+        #             )
                     
-                    widget.add_trace(line_trace)
+        #             widget.add_trace(line_trace)
                     
-                    # Add Gaussian curve overlay if fitting was successful
-                    if gaussian_params is not None and gaussian_fit_range is not None:
-                        # Create high-resolution x points for smooth curve
-                        x_smooth = np.linspace(gaussian_fit_range[0], gaussian_fit_range[1], 100)
+        #             # Add Gaussian curve overlay if fitting was successful
+        #             if gaussian_params is not None and gaussian_fit_range is not None:
+        #                 # Create high-resolution x points for smooth curve
+        #                 x_smooth = np.linspace(gaussian_fit_range[0], gaussian_fit_range[1], 100)
                         
-                        # Calculate Gaussian curve using fitted parameters
-                        def gaussian(x, a, mu, sigma, c):
-                            return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+        #                 # Calculate Gaussian curve using fitted parameters
+        #                 def gaussian(x, a, mu, sigma, c):
+        #                     return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
                         
-                        y_smooth = gaussian(x_smooth, *gaussian_params)
+        #                 y_smooth = gaussian(x_smooth, *gaussian_params)
                         
-                        # Create Gaussian curve trace
-                        gaussian_trace = go.Scatter(
-                            x=x_smooth,
-                            y=y_smooth,
-                            mode='lines',
-                            line=dict(color='red', width=2, dash='dot'),
-                            name='gaussian_fit',
-                            showlegend=False,
-                            hovertemplate='<b>Gaussian Fit</b><br>x: %{x:.5f}<br>y: %{y:.3f}<extra></extra>',
-                            opacity=0.8
-                        )
+        #                 # Create Gaussian curve trace
+        #                 gaussian_trace = go.Scatter(
+        #                     x=x_smooth,
+        #                     y=y_smooth,
+        #                     mode='lines',
+        #                     line=dict(color='red', width=2, dash='dot'),
+        #                     name='gaussian_fit',
+        #                     showlegend=False,
+        #                     hovertemplate='<b>Gaussian Fit</b><br>x: %{x:.5f}<br>y: %{y:.3f}<extra></extra>',
+        #                     opacity=0.8
+        #                 )
                         
-                        widget.add_trace(gaussian_trace)
-                        print(f"Gaussian curve overlay added: range [{gaussian_fit_range[0]:.3f}, {gaussian_fit_range[1]:.3f}]")
+        #                 widget.add_trace(gaussian_trace)
+        #                 print(f"Gaussian curve overlay added: range [{gaussian_fit_range[0]:.3f}, {gaussian_fit_range[1]:.3f}]")
                     
-                    print(f"Vertical line added successfully:")
-                    print(f"  - Position: x={max_x:.3f}")
-                    print(f"  - Y-range: [{y_min:.1f}, {y_max_range:.1f}]")
-                    print(f"  - Line style: red, width=1, solid")
-                    print(f"  - Total traces in widget: {len(widget.data)}")
+        #             print(f"Vertical line added successfully:")
+        #             print(f"  - Position: x={max_x:.3f}")
+        #             print(f"  - Y-range: [{y_min:.1f}, {y_max_range:.1f}]")
+        #             print(f"  - Line style: red, width=1, solid")
+        #             print(f"  - Total traces in widget: {len(widget.data)}")
                     
-                    # Force a refresh of the widget display
-                    widget.layout.uirevision = f"max_marker_{max_x:.3f}_{max_y:.3f}"
+        #             # Force a refresh of the widget display
+        #             widget.layout.uirevision = f"max_marker_{max_x:.3f}_{max_y:.3f}"
                     
-            except Exception as e:
-                print(f"Error adding vertical line: {e}")
-                import traceback
-                traceback.print_exc()
+        #     except Exception as e:
+        #         print(f"Error adding vertical line: {e}")
+        #         import traceback
+        #         traceback.print_exc()
                 
-        # Also analyze the heatmap for maximum intensity
-        try:
-            # Get heatmap data
-            calc_state = fft_calculation_state.get()
-            if calc_state['region'] is not None:
-                # Check if we should use nominal apix (initial) or current apix (after slider changes)
-                nominal_apix = float(input.nominal_apix())
-                current_apix = get_apix()
+        # # Also analyze the heatmap for maximum intensity
+        # try:
+        #     # Get heatmap data
+        #     calc_state = fft_calculation_state.get()
+        #     if calc_state['region'] is not None:
+        #         # Check if we should use nominal apix (initial) or current apix (after slider changes)
+        #         nominal_apix = float(input.nominal_apix())
+        #         current_apix = get_apix()
                 
-                if abs(current_apix - nominal_apix) < 0.01:
-                    range_apix = nominal_apix
-                else:
-                    range_apix = current_apix
+        #         if abs(current_apix - nominal_apix) < 0.01:
+        #             range_apix = nominal_apix
+        #         else:
+        #             range_apix = current_apix
                 
-                heatmap_data = compute_fft_polar_heatmap_data(
-                    region=calc_state['region'],
-                    apix=range_apix,
-                    resolution_type=calc_state['resolution_type'],
-                    custom_resolution=calc_state['custom_resolution']
-                )
+        #         heatmap_data = compute_fft_polar_heatmap_data(
+        #             region=calc_state['region'],
+        #             apix=range_apix,
+        #             resolution_type=calc_state['resolution_type'],
+        #             custom_resolution=calc_state['custom_resolution']
+        #         )
                 
-                z_data = heatmap_data['heatmap_data']
-                if input.log_y():
-                    z_data = np.log1p(z_data)
+        #         z_data = heatmap_data['heatmap_data']
+        #         if input.log_y():
+        #             z_data = np.log1p(z_data)
                 
-                # Calculate zoom range to limit search area (same as heatmap display)
-                # Get resolution and calculate target radius
-                if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
-                    resolution_map = {
-                        "Graphene (2.13 Å)": 2.13,
-                        "Graphene (100)": 2.13,
-                        "Graphene (110)": 1.23,
-                        "Gold (2.355 Å)": 2.355,
-                        "Gold (111)": 2.35,
-                        "Gold (200)": 2.04,
-                        "Gold (220)": 1.44,
-                        "Ice (3.661 Å)": 3.661
-                    }
-                    target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
-                else:
-                    target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+        #         # Calculate zoom range to limit search area (same as heatmap display)
+        #         # Get resolution and calculate target radius
+        #         if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+        #             resolution_map = {
+        #                 "Graphene (2.13 Å)": 2.13,
+        #                 "Graphene (100)": 2.13,
+        #                 "Graphene (110)": 1.23,
+        #                 "Gold (2.355 Å)": 2.355,
+        #                 "Gold (111)": 2.35,
+        #                 "Gold (200)": 2.04,
+        #                 "Gold (220)": 1.44,
+        #                 "Ice (3.661 Å)": 3.661
+        #             }
+        #             target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+        #         else:
+        #             target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
                 
-                nominal_apix = float(input.nominal_apix())
-                region_size = calc_state['region'].size[0]
-                target_radius = (region_size * nominal_apix) / target_resolution
+        #         nominal_apix = float(input.nominal_apix())
+        #         region_size = calc_state['region'].size[0]
+        #         target_radius = (region_size * nominal_apix) / target_resolution
                 
-                # Define zoom range: ±15 pixels around target radius
-                zoom_margin = 15
-                y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
-                y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
+        #         # Define zoom range: ±15 pixels around target radius
+        #         zoom_margin = 15
+        #         y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
+        #         y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
                 
-                # Filter radii indices to only search within zoom range
-                radii_mask = (heatmap_data['radii'] >= y_min) & (heatmap_data['radii'] <= y_max)
-                valid_radius_indices = np.where(radii_mask)[0]
+        #         # Filter radii indices to only search within zoom range
+        #         radii_mask = (heatmap_data['radii'] >= y_min) & (heatmap_data['radii'] <= y_max)
+        #         valid_radius_indices = np.where(radii_mask)[0]
                 
-                if len(valid_radius_indices) == 0:
-                    print("No radii in zoom range for Find Max search")
-                    return
+        #         if len(valid_radius_indices) == 0:
+        #             print("No radii in zoom range for Find Max search")
+        #             return
                 
-                # Create masked data for search (only zoomed region)
-                # z_data has shape (angles x radii), we want to mask the radii dimension
-                masked_z_data = z_data[:, radii_mask]
+        #         # Create masked data for search (only zoomed region)
+        #         # z_data has shape (angles x radii), we want to mask the radii dimension
+        #         masked_z_data = z_data[:, radii_mask]
                 
-                # Find maximum intensity in the masked (zoomed) region
-                max_intensity_idx = np.unravel_index(np.argmax(masked_z_data), masked_z_data.shape)
-                max_angle_idx, masked_radius_idx = max_intensity_idx
+        #         # Find maximum intensity in the masked (zoomed) region
+        #         max_intensity_idx = np.unravel_index(np.argmax(masked_z_data), masked_z_data.shape)
+        #         max_angle_idx, masked_radius_idx = max_intensity_idx
                 
-                # Convert masked radius index back to original radius index
-                max_radius_idx = valid_radius_indices[masked_radius_idx]
+        #         # Convert masked radius index back to original radius index
+        #         max_radius_idx = valid_radius_indices[masked_radius_idx]
                 
-                max_radius = heatmap_data['radii'][max_radius_idx]
-                max_angle = heatmap_data['angles'][max_angle_idx]
-                max_intensity = masked_z_data[max_intensity_idx]
+        #         max_radius = heatmap_data['radii'][max_radius_idx]
+        #         max_angle = heatmap_data['angles'][max_angle_idx]
+        #         max_intensity = masked_z_data[max_intensity_idx]
                 
-                print(f"Find Max search limited to zoomed region:")
-                print(f"  - Zoom range: {y_min:.1f} - {y_max:.1f} px")
-                print(f"  - Searched {len(valid_radius_indices)} of {len(heatmap_data['radii'])} radii")
+        #         print(f"Find Max search limited to zoomed region:")
+        #         print(f"  - Zoom range: {y_min:.1f} - {y_max:.1f} px")
+        #         print(f"  - Searched {len(valid_radius_indices)} of {len(heatmap_data['radii'])} radii")
                 
-                print(f"Heatmap maximum found:")
-                print(f"  - Radius: {max_radius:.1f} px")
-                print(f"  - Angle: {max_angle:.0f}°")
-                print(f"  - Intensity: {max_intensity:.3f}")
+        #         print(f"Heatmap maximum found:")
+        #         print(f"  - Radius: {max_radius:.1f} px")
+        #         print(f"  - Angle: {max_angle:.0f}°")
+        #         print(f"  - Intensity: {max_intensity:.3f}")
                 
-                # Add red circle overlay to heatmap at max position
-                try:
-                    # Get the heatmap widget (we need to access it through a stored reference)
-                    # Since we don't have a direct widget reference for the heatmap, 
-                    # we'll need to trigger a heatmap update that includes the overlay
-                    # Store the max position for the heatmap to use
-                    heatmap_max_position.set({
-                        'radius': max_radius,
-                        'angle': max_angle,
-                        'show_overlay': True
-                    })
-                    print(f"Added red circle overlay to heatmap at radius={max_radius:.1f}, angle={max_angle:.0f}°")
+        #         # Add red circle overlay to heatmap at max position
+        #         try:
+        #             # Get the heatmap widget (we need to access it through a stored reference)
+        #             # Since we don't have a direct widget reference for the heatmap, 
+        #             # we'll need to trigger a heatmap update that includes the overlay
+        #             # Store the max position for the heatmap to use
+        #             heatmap_max_position.set({
+        #                 'radius': max_radius,
+        #                 'angle': max_angle,
+        #                 'show_overlay': True
+        #             })
+        #             print(f"Added red circle overlay to heatmap at radius={max_radius:.1f}, angle={max_angle:.0f}°")
                     
-                except Exception as overlay_error:
-                    print(f"Error adding heatmap overlay: {overlay_error}")
+        #         except Exception as overlay_error:
+        #             print(f"Error adding heatmap overlay: {overlay_error}")
                 
-                # Super resolution analysis for heatmap if enabled
-                if input.super_resolution():
-                    # Extract the column (all radii) at the max angle, but limit to zoom region
-                    angle_row = z_data[max_angle_idx, radii_mask]  # Use masked data for consistency
-                    radii = heatmap_data['radii'][radii_mask]  # Use radii in zoom region
+        #         # Super resolution analysis for heatmap if enabled
+        #         if input.super_resolution():
+        #             # Extract the column (all radii) at the max angle, but limit to zoom region
+        #             angle_row = z_data[max_angle_idx, radii_mask]  # Use masked data for consistency
+        #             radii = heatmap_data['radii'][radii_mask]  # Use radii in zoom region
                     
-                    # Find window around max radius
-                    gaussian_window = input.gaussian_window()
-                    radius_window_half = gaussian_window / 2.0
+        #             # Find window around max radius
+        #             gaussian_window = input.gaussian_window()
+        #             radius_window_half = gaussian_window / 2.0
                     
-                    # Create mask for radii within window
-                    radius_mask = np.abs(radii - max_radius) <= radius_window_half
-                    if np.sum(radius_mask) >= 5:  # Need at least 5 points
-                        fit_radii = radii[radius_mask]
-                        fit_intensities = angle_row[radius_mask]
+        #             # Create mask for radii within window
+        #             radius_mask = np.abs(radii - max_radius) <= radius_window_half
+        #             if np.sum(radius_mask) >= 5:  # Need at least 5 points
+        #                 fit_radii = radii[radius_mask]
+        #                 fit_intensities = angle_row[radius_mask]
                         
-                        try:
-                            from scipy.optimize import curve_fit
+        #                 try:
+        #                     from scipy.optimize import curve_fit
                             
-                            def gaussian(x, a, mu, sigma, c):
-                                return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+        #                     def gaussian(x, a, mu, sigma, c):
+        #                         return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
                             
-                            # Initial guesses
-                            a_guess = max_intensity
-                            mu_guess = max_radius
-                            sigma_guess = radius_window_half / 3
-                            c_guess = np.min(fit_intensities)
+        #                     # Initial guesses
+        #                     a_guess = max_intensity
+        #                     mu_guess = max_radius
+        #                     sigma_guess = radius_window_half / 3
+        #                     c_guess = np.min(fit_intensities)
                             
-                            # Fit Gaussian
-                            popt, _ = curve_fit(gaussian, fit_radii, fit_intensities,
-                                              p0=[a_guess, mu_guess, sigma_guess, c_guess],
-                                              maxfev=1000)
+        #                     # Fit Gaussian
+        #                     popt, _ = curve_fit(gaussian, fit_radii, fit_intensities,
+        #                                       p0=[a_guess, mu_guess, sigma_guess, c_guess],
+        #                                       maxfev=1000)
                             
-                            fitted_radius = popt[1]
-                            fitted_intensity = popt[0] + popt[3]  # peak + baseline
+        #                     fitted_radius = popt[1]
+        #                     fitted_intensity = popt[0] + popt[3]  # peak + baseline
                             
-                            print(f"Heatmap Gaussian fit (super resolution):")
-                            print(f"  - Fitted radius: {fitted_radius:.2f} px")
-                            print(f"  - Fitted intensity: {fitted_intensity:.3f}")
+        #                     print(f"Heatmap Gaussian fit (super resolution):")
+        #                     print(f"  - Fitted radius: {fitted_radius:.2f} px")
+        #                     print(f"  - Fitted intensity: {fitted_intensity:.3f}")
                             
-                        except Exception as fit_error:
-                            print(f"Heatmap Gaussian fitting failed: {fit_error}")
-                    else:
-                        print("Heatmap super resolution: Not enough points for Gaussian fitting")
-        except Exception as e:
-            print(f"Error analyzing heatmap: {e}")
-            import traceback
-            traceback.print_exc()
+        #                 except Exception as fit_error:
+        #                     print(f"Heatmap Gaussian fitting failed: {fit_error}")
+        #             else:
+        #                 print("Heatmap super resolution: Not enough points for Gaussian fitting")
+        # except Exception as e:
+        #     print(f"Error analyzing heatmap: {e}")
+        #     import traceback
+        #     traceback.print_exc()
 
     @reactive.Effect
     @reactive.event(input.add_to_table)
