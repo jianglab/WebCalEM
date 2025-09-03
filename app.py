@@ -784,12 +784,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.apix_slider)
     def _():
         click_flag = apix_updating_from_nufft_click.get()
-        print(f"🔍 APIX_SLIDER: Slider changed, apix_updating_from_nufft_click={click_flag}")
         if click_flag:
             # Skip updates when apix is being set from NuFFT click
-            print("🔍 APIX_SLIDER: Skipping apix_master update due to NuFFT click flag")
             return
-        print(f"🔍 APIX_SLIDER: Setting apix_master to {input.apix_slider()}")
         apix_master.set(input.apix_slider())
         # Clear 1D plot clicked position when apix changes from slider
         #plot_1d_click_pos.set({'x': None, 'y': None})
@@ -801,10 +798,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             val = float(input.apix_exact_str())
             if 0.001 <= val <= 6.0:
                 click_flag = apix_updating_from_nufft_click.get()
-                print(f"🔍 APIX_SET: Set button pressed, apix_updating_from_nufft_click={click_flag}")
                 if click_flag:
-            # Skip updates when apix is being set from NuFFT click
-                    print("🔍 APIX_SLIDER: Skipping apix_master update due to NuFFT click flag")
+                    # Skip updates when apix is being set from NuFFT click
                     return
                 #apix_master.set(val)
                 ui.update_slider("apix_slider", value=val, session=session)
@@ -2448,10 +2443,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'custom_resolution': input.custom_resolution()
             })
             
-            # Also store the same state for NuFFT calculations
+            # Also store the same state for NuFFT calculations - use nominal apix
             nufft_calculation_state.set({
                 'region': region,
-                'apix': get_apix(),
+                'apix': float(input.nominal_apix()),
                 'resolution_type': input.resolution_type(),
                 'custom_resolution': input.custom_resolution()
             })
@@ -2467,9 +2462,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq, input.nufft_display_range, nufft_calculation_requested)
     def calculate_nufft_when_requested():
         """Calculate NuFFT data ONLY when sampling parameters change or explicitly requested."""
-        print(f"🔍 NUFFT_CALC: Function called, nufft_calculation_requested={nufft_calculation_requested.get()}")
         if not nufft_calculation_requested.get():
-            print("🔍 NUFFT_CALC: Not requested, returning early")
             return
         
         # Get current slider values
@@ -2481,11 +2474,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Check if we have the required NuFFT calculation state
             calc_state = nufft_calculation_state.get()
             if calc_state['region'] is None:
-                print("❌ No region available for NuFFT calculation")
                 return
             
-            # Get current parameters for NuFFT calculation
-            current_apix = get_apix()
+            # Get current parameters for NuFFT calculation - use NOMINAL apix only
+            current_apix = float(input.nominal_apix())
             
             # Get target resolution and create ±10% range around it
             target_resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
@@ -3182,7 +3174,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         req(calc_state['region'] is not None)
         
         # Request NuFFT calculation if not already done
-        print("🔍 NUFFT_HEATMAP: Setting nufft_calculation_requested=True")
         nufft_calculation_requested.set(True)
         
         # Get cached data
@@ -3203,7 +3194,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         freq_low = cached_heatmap_data['freq_low']
         freq_high = cached_heatmap_data['freq_high']
         display_range = cached_heatmap_data['display_range']
-        apix_source = f"Cached Apix: {current_apix:.3f}"
+        apix_source = f"Nominal Apix: {current_apix:.3f}"
         
         print(f"   pwr shape: {pwr.shape if hasattr(pwr, 'shape') else type(pwr)}")
         print(f"   r_samples: {r_samples}, theta_samples: {theta_samples}")
@@ -3301,7 +3292,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         req(calc_state['region'] is not None)
         
         # Request NuFFT calculation if not already done
-        print("🔍 NUFFT_POWER: Setting nufft_calculation_requested=True")
         nufft_calculation_requested.set(True)
         
         # Get cached data
@@ -3493,21 +3483,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                         tentative_apix = trace.customdata[point_idx][1]  # Second column is tentative apix
                     
                     if tentative_apix is not None:
-                        print("=== NuFFT Power Curve Click ===")
-                        print(f"🎯 CLICK: Setting apix to: {tentative_apix:.6f} Å/px")
-                        
-                        # No need to prevent NuFFT recalculation - it's not reactive to apix changes anymore
-                        print("🔧 CLICK: NuFFT calc is not reactive to apix, no blocking needed")
-                        
                         # Update the apix slider directly to the tentative apix value
-                        print("🔧 CLICK: Updating apix text input")
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.6f}")
-                        print("🔧 CLICK: Updating apix slider")
                         ui.update_slider("apix_slider", value=tentative_apix)
-                        
-                        print("✅ CLICK: Apix UI updates complete")
-                    else:
-                        print("❌ Could not extract tentative apix from hover data")
+                    # If tentative_apix is None, do nothing
                         
                 except Exception as e:
                     print(f"Error processing NuFFT power curve click: {e}")
@@ -4204,13 +4183,11 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(apix_master)
     def _():
         val = apix_master.get()
-        print(f"🔍 APIX_MASTER: apix_master changed to {val}")
         
         # Only update if the change is significant (>= 0.001)
         # This prevents unnecessary updates for tiny changes
         current_slider_val = input.apix_slider()
         if abs(val - current_slider_val) < 0.001:
-            print(f"🔍 APIX_MASTER: Change too small ({abs(val - current_slider_val)}), skipping")
             return
             
         # Update UI controls
