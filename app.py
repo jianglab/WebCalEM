@@ -309,13 +309,13 @@ app_ui = ui.page_sidebar(
                     output_widget("image_display"),
                     ui.div(
                         {"style": "display: flex; gap: 10px; padding: 10px; justify-content: center;"},
-                        ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
+                        #ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
                         ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
                     ),
-                    ui.div(
-                        {"class": "card-footer"},
-                        "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
-                    ),
+                    # ui.div(
+                    #     {"class": "card-footer"},
+                    #     "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
+                    # ),
                     full_screen=True,
                 ),
             ),
