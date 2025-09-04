@@ -401,11 +401,11 @@ app_ui = ui.page_sidebar(
                                     ),
                                     ui.div(
                                         {"style": "margin-bottom: 10px;"},
-                                        ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
+                                        ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=2, step=0.1),
                                     ),
                                     ui.div(
                                         {"style": "margin-bottom: 10px;"},
-                                        ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=10, value=2, step=0.1),
+                                        ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=5, value=2, step=0.1),
                                     ),
                                     ui.div(
                                         {"style": "margin-bottom: 10px;"},
@@ -1702,8 +1702,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Write the file content to temp path  
         # Debug: Check the structure of file_info
-        print(f"DEBUG: file_info keys: {file_info.keys()}")
-        print(f"DEBUG: file_info: {file_info}")
+        # print(f"DEBUG: file_info keys: {file_info.keys()}")
+        # print(f"DEBUG: file_info: {file_info}")
         
         # Shiny file upload structure - use the correct key for content
         if 'contents' in file_info:
@@ -2690,11 +2690,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             r_samples_uncapped = int((0.5 * region_size) * r_freq)
             theta_samples_uncapped = int(360 * theta_freq)
             
-            r_samples = min(r_samples_uncapped, 10000)  # Cap at 2000 for better resolution
-            theta_samples = min(theta_samples_uncapped, 3600)  # Cap at 720 for better angular resolution
+            r_samples = min(r_samples_uncapped, 3000)  # Cap at 2000 for better resolution
+            theta_samples = min(theta_samples_uncapped, 1800)  # Cap at 720 for better angular resolution
             
             # Show if capping occurred
-            r_capped = r_samples_uncapped > 10000
+            r_capped = r_samples_uncapped > 3000
             theta_capped = theta_samples_uncapped > 3600
             print(f"🔧 NuFFT calculation params:")
             print(f"   r_samples: {r_samples}{' (CAPPED from ' + str(r_samples_uncapped) + ')' if r_capped else ''} → affects power curve smoothness")
@@ -3618,7 +3618,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     spikecolor="rgba(0,0,0,0.5)",  # Dark gray with transparency
                     spikesnap="cursor",  # Snap spike to cursor position
                     spikemode="across",  # Show spike across entire plot
-                    spikethickness=2,  # Thickness of spike line
+                    spikethickness=1,  # Thickness of spike line
                     spikedash="dash"  # Dashed spike line
                 ),
                 yaxis=dict(
@@ -3685,6 +3685,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         def on_click(trace, points, selector):
             """Handle click events on NuFFT power curve."""
+            print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
             if points.point_inds:
                 try:
                     # Get clicked point information
@@ -3701,13 +3702,13 @@ def server(input: Inputs, output: Outputs, session: Session):
                         
                         # Add vertical line at click position using add_vline method
                         if x_val is not None:
-                            print(f"DEBUG: Adding green line at x_val={x_val}")
+                            #print(f"DEBUG: Adding green line at x_val={x_val}")
                             
                             # First clear any existing green lines
                             with widget.batch_update():
                                 # Clear existing shapes by filtering out green lines
                                 current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
-                                print(f"DEBUG: Current shapes count: {len(current_shapes)}")
+                                #print(f"DEBUG: Current shapes count: {len(current_shapes)}")
                                 
                                 # More robust filtering - check for green color in different ways
                                 preserved_shapes = []
@@ -3758,8 +3759,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     green_line_shape = {
                                         'type': 'line',
                                         'x0': x_val, 'x1': x_val,
-                                        'y0': y_min, 'y1': y_max,
-                                        'line': {'color': 'green', 'width': 3, 'dash': 'solid'}
+                                        'y0': y_min-1, 'y1': y_max+1,
+                                        'line': {'color': 'green', 'width': 2, 'dash': 'solid'}
                                     }
                                     current_shapes.append(green_line_shape)
                                     widget.layout.shapes = current_shapes
