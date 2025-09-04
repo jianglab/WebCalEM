@@ -287,7 +287,11 @@ app_ui = ui.page_sidebar(
                     ),
                     ui.panel_conditional(
                         "input.input_method === 'Upload'",
-                        ui.input_file("upload", "Upload image (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"])
+                        ui.input_file("upload", "Upload image (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"]),
+                        ui.div(
+                        {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
+                        ui.output_data_frame("upload_files_table"),
+                    ),
                     ),
                     ui.div(
                         {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 5px; margin-top: 10px; width: 100%;"},
@@ -3483,9 +3487,69 @@ def server(input: Inputs, output: Outputs, session: Session):
                         tentative_apix = trace.customdata[point_idx][1]  # Second column is tentative apix
                     
                     if tentative_apix is not None:
+                        # Get the x-value (spatial frequency) for the vertical line
+                        x_val = points.xs[0] if points.xs else None
+                        
+                        # Add vertical line at click position using add_vline method
+                        if x_val is not None:
+                            print(f"DEBUG: Adding green line at x_val={x_val}")
+                            
+                            # First clear any existing green lines
+                            with widget.batch_update():
+                                # Clear existing shapes by filtering out green lines
+                                current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
+                                print(f"DEBUG: Current shapes count: {len(current_shapes)}")
+                                
+                                # More robust filtering - check for green color in different ways
+                                preserved_shapes = []
+                                for shape in current_shapes:
+                                    is_green_line = False
+                                    if hasattr(shape, 'line'):
+                                        if hasattr(shape.line, 'color') and shape.line.color == 'green':
+                                            is_green_line = True
+                                        elif isinstance(shape.line, dict) and shape.line.get('color') == 'green':
+                                            is_green_line = True
+                                    elif isinstance(shape, dict) and shape.get('line', {}).get('color') == 'green':
+                                        is_green_line = True
+                                    
+                                    if not is_green_line:
+                                        preserved_shapes.append(shape)
+                                
+                                print(f"DEBUG: Preserved shapes count: {len(preserved_shapes)}")
+                                
+                                # Set the filtered shapes first
+                                widget.layout.shapes = preserved_shapes
+                            
+                            # Now add the green line using add_vline
+                            try:
+                                widget.add_vline(
+                                    x=x_val,
+                                    line_color="green",
+                                    line_width=2,
+                                    line_dash="solid"
+                                )
+                                print("DEBUG: Green line added successfully using add_vline")
+                            except Exception as e:
+                                print(f"DEBUG: add_vline failed: {e}")
+                                
+                                # Fallback to manual shape creation
+                                with widget.batch_update():
+                                    current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
+                                    green_line_shape = {
+                                        'type': 'line',
+                                        'x0': x_val, 'x1': x_val,
+                                        'y0': 0, 'y1': 1,
+                                        'yref': 'paper',
+                                        'line': {'color': 'green', 'width': 2, 'dash': 'solid'}
+                                    }
+                                    current_shapes.append(green_line_shape)
+                                    widget.layout.shapes = current_shapes
+                                    print("DEBUG: Green line added using manual shape creation")
+                        
                         # Update the apix slider directly to the tentative apix value
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.6f}")
                         ui.update_slider("apix_slider", value=tentative_apix)
+                        
                     # If tentative_apix is None, do nothing
                         
                 except Exception as e:
@@ -3496,6 +3560,25 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Add click handler to the first trace (the power curve line)
         if len(widget.data) > 0:
             widget.data[0].on_click(on_click)
+            
+        # Add general click handler to clear green line when clicking elsewhere
+        def on_general_click(trace, points, selector):
+            """Clear green line when clicking outside the power curve."""
+            # If no points were clicked or this is a different trace, clear green lines
+            if not points.point_inds or trace != widget.data[0]:
+                with widget.batch_update():
+                    # Remove all green vertical lines
+                    current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
+                    preserved_shapes = [shape for shape in current_shapes 
+                                      if not (hasattr(shape, 'line') and 
+                                             hasattr(shape.line, 'color') and 
+                                             shape.line.color == 'green')]
+                    widget.layout.shapes = preserved_shapes
+                    
+        # Add click handler to other traces if they exist (like background)
+        for i, trace in enumerate(widget.data):
+            if i != 0:  # Skip the first trace (power curve) as it has its own handler
+                trace.on_click(on_general_click)
 
     # @output
     # @render.text
