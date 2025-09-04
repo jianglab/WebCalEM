@@ -287,7 +287,7 @@ app_ui = ui.page_sidebar(
                     ),
                     ui.panel_conditional(
                         "input.input_method === 'Upload'",
-                        ui.input_file("upload", "Upload image (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"]),
+                        ui.input_file("upload", "Upload images (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"], multiple=True),
                         ui.div(
                         {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
                         ui.output_data_frame("upload_files_table"),
@@ -295,7 +295,7 @@ app_ui = ui.page_sidebar(
                     ),
                     ui.div(
                         {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 5px; margin-top: 10px; width: 100%;"},
-                        ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0; font-size: 12px;"}),
+                        ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0"}),
                         ui.input_text("nominal_apix", None, value="1.00", width="80px"),
                     ),
                     ui.input_select("resolution_type", "Resolution Type", 
@@ -471,12 +471,12 @@ app_ui = ui.page_sidebar(
                         # Apix slider
                         ui.div(
                             {"style": "flex: 2;"},
-                            ui.input_slider("apix_slider", "Apix (Å/px)", min=0.01, max=2.0, value=1.0, step=0.001),
+                            ui.input_slider("apix_slider", "Pixel Size (Å/px)", min=0.01, max=2.0, value=1.0, step=0.0001),
                         ),
                         # Apix exact input and Set button
                         ui.div(
                             {"style": "display: flex; align-items: center; gap: 5px; flex: 1;"},
-                            ui.input_text("apix_exact_str", "Exact:", value="1.0", width="80px"),
+                            ui.input_text("apix_exact_str", "Exact Value:", value="1.0", width="80px"),
                             ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
                         ),
                         # Add to Table button
@@ -601,6 +601,61 @@ def server(input: Inputs, output: Outputs, session: Session):
             'zoom_factor': state['zoom_factor']
         })
     
+    # Handle file upload and populate upload table
+    @reactive.Effect
+    @reactive.event(input.upload)
+    def _():
+        """Handle multiple file upload and populate the upload table."""
+        files = input.upload()
+        if files is None or len(files) == 0:
+            # Clear the uploaded files data if no files
+            uploaded_files_data.set([])
+            return
+            
+        # Process each uploaded file
+        files_info = []
+        for i, file_info in enumerate(files):
+            # Extract nominal apix from filename, default to 1.0 if unclear
+            filename = file_info['name']
+            nominal_apix = extract_nominal(filename)
+            
+            files_info.append({
+                'index': i,
+                'name': filename,
+                'nominal_apix': nominal_apix,
+                'file_info': file_info  # Store the full file info for later use
+            })
+        
+        # Update the uploaded files data
+        uploaded_files_data.set(files_info)
+        
+        # Auto-select the first file
+        if files_info:
+            selected_file_index.set(0)
+            # Set the nominal apix from the first file
+            ui.update_text("nominal_apix", value=str(files_info[0]['nominal_apix']))
+    
+    # Handle table row selection for file switching  
+    @reactive.Effect
+    def _():
+        """Handle file selection from upload table."""
+        try:
+            # Get the data frame selection from upload_files_table
+            selected_rows = input.upload_files_table_selected_rows()
+            if selected_rows and len(selected_rows) > 0:
+                # Update selected file index based on table selection
+                new_index = selected_rows[0]
+                if new_index != selected_file_index.get():
+                    selected_file_index.set(new_index)
+                    
+                    # Update nominal apix from selected file
+                    files_data = uploaded_files_data.get()
+                    if files_data and new_index < len(files_data):
+                        selected_file = files_data[new_index]
+                        ui.update_text("nominal_apix", value=str(selected_file['nominal_apix']))
+        except Exception as e:
+            print(f"Error handling table selection: {e}")
+    
     # Remove fft_1d_data since we're no longer using static markers
 
     # Add reactive value to cache the base FFT image
@@ -704,15 +759,57 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Add reactive value to force complete FFT widget refresh
     fft_widget_refresh_trigger = reactive.Value(0)
     
+    # Add reactive values for uploaded files management
+    uploaded_files_data = reactive.Value([])  # List of file info dicts
+    selected_file_index = reactive.Value(0)   # Currently selected file index
+    
     # Helper function to extract nominal value from filename
     def extract_nominal(filename):
-        """Extract nominal value from filename (e.g., 0.75 from '130k-Pixel0.75A.tiff').
-        Returns 1.0 if extraction fails."""
+        """Extract nominal apix value from filename.
+        
+        Examples:
+        - '390k-nominal0.36.tiff' -> 0.36
+        - '150k-nominal0.97.tiff' -> 0.97  
+        - '130k-Pixel0.75A.tiff' -> 0.75
+        - 'test1.25image.mrc' -> 1.25
+        
+        Returns 1.0 if extraction fails or if ambiguous (multiple values found).
+        """
         import re
         if not isinstance(filename, str):
             return 1.0
-        m = re.search(r"(\d+\.\d+)A", filename)
-        return float(m.group(1)) if m else 1.0
+            
+        # Try different patterns in order of specificity
+        patterns = [
+            r"nominal(\d+\.\d+)",        # nominal0.36, nominal1.25
+            r"pixel(\d+\.\d+)a?",        # Pixel0.75A, pixel1.0
+            r"apix(\d+\.\d+)",           # apix0.5, apix1.2
+            r"(\d+\.\d+)a(?:ngstrom)?",  # 0.75A, 1.5angstrom
+            r"(\d+\.\d+)(?=\D|$)"        # Any X.XX format (less specific, use last)
+        ]
+        
+        found_values = []
+        
+        # Try each pattern
+        for pattern in patterns:
+            matches = re.findall(pattern, filename, re.IGNORECASE)
+            for match in matches:
+                try:
+                    value = float(match)
+                    # Only consider reasonable apix values (0.1 to 5.0)
+                    if 0.1 <= value <= 5.0:
+                        found_values.append(value)
+                except ValueError:
+                    continue
+        
+        # Return the first reasonable value found, or 1.0 if none/ambiguous
+        if len(found_values) == 1:
+            return found_values[0]
+        elif len(found_values) > 1:
+            # If multiple values, prefer the first one from a more specific pattern
+            return found_values[0]
+        else:
+            return 1.0
     
     # Add reactive value to store the region analysis table data
     region_table_data = reactive.Value(pd.DataFrame({
@@ -720,7 +817,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         'Region Size': [],
         'Region Location': [],
         'Apix': [],
-        'Nominal': []
+        'Nominal': [],
+        'Apix Stats': []
     }))
     
     # Add reactive value to store the region and parameters used for current FFT calculation
@@ -1570,13 +1668,65 @@ def server(input: Inputs, output: Outputs, session: Session):
 
 
     @reactive.Effect
-    @reactive.event(input.upload)
+    @reactive.event(selected_file_index, uploaded_files_data)
     def _():
-        """Update image data when a new file is uploaded."""
-        path = image_path()
-        file_info = input.upload()
+        """Update image data when a file is selected from uploaded files."""
+        files_data = uploaded_files_data.get()
+        selected_idx = selected_file_index.get()
         
-        if not path or not path.exists() or not file_info:
+        # Check if we have valid files and selection
+        if not files_data or selected_idx >= len(files_data):
+            raw_image_data.set({'img': None, 'data': None})
+            image_data.set(None)
+            image_filename.set(None)
+            original_image_data.set(None)
+            binned_image_data.set(None)
+            image_zoom_state.set({'x_range': None, 'y_range': None, 'is_zoomed': False, 'drawn_region': None})
+            cached_fft_image.set(None)
+            cached_nufft_heatmap_data.set(None)
+            cached_nufft_power_data.set(None)
+            nufft_calculation_requested.set(False)  # Reset calculation request
+            fft_widget.set(None)  # Clear FFT widget
+            base_fft_trigger.set(0)  # Also reset base trigger for clean state
+            return
+            
+        # Get the selected file
+        selected_file = files_data[selected_idx]
+        file_info = selected_file['file_info']
+        
+        # Create a temporary path for the selected file
+        import tempfile
+        import os
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, file_info['name'])
+        
+        # Write the file content to temp path  
+        # Debug: Check the structure of file_info
+        print(f"DEBUG: file_info keys: {file_info.keys()}")
+        print(f"DEBUG: file_info: {file_info}")
+        
+        # Shiny file upload structure - use the correct key for content
+        if 'contents' in file_info:
+            file_content = file_info['contents']
+        elif 'content' in file_info:
+            file_content = file_info['content']  
+        elif 'datapath' in file_info:
+            # If there's a datapath, copy from there
+            import shutil
+            shutil.copy2(file_info['datapath'], temp_path)
+            file_content = None
+        else:
+            print(f"ERROR: Could not find file content in file_info keys: {list(file_info.keys())}")
+            return
+            
+        if file_content is not None:
+            with open(temp_path, 'wb') as f:
+                f.write(file_content)
+        
+        import pathlib
+        path = pathlib.Path(temp_path)
+        
+        if not path.exists():
             raw_image_data.set({'img': None, 'data': None})
             image_data.set(None)
             image_filename.set(None)
@@ -1625,8 +1775,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"Created binned version for display: binned_shape={binned_data.shape}")
             
             # Get the original filename from the upload info instead of the temporary path
-            original_filename = file_info[0]["name"]
-            #print(f"Original filename: {original_filename}")
+            original_filename = file_info["name"]
+            print(f"Original filename: {original_filename}")
             
             # Extract nominal apix from filename and update the textbox and slider
             nominal_value = extract_nominal(original_filename)
@@ -2188,6 +2338,40 @@ def server(input: Inputs, output: Outputs, session: Session):
             return None
 
     @output
+    @render.data_frame  
+    def upload_files_table():
+        """Render table for uploaded files with File Name and Nominal Apix columns."""
+        import pandas as pd
+        
+        # Get uploaded files data
+        files_data = uploaded_files_data.get()
+        
+        if not files_data:
+            # Create empty DataFrame with the required columns
+            empty_df = pd.DataFrame({
+                'File Name': [],
+                'Nominal Apix': []
+            })
+            return empty_df
+        
+        # Create DataFrame from files data
+        df = pd.DataFrame([
+            {
+                'File Name': file_info['name'], 
+                'Nominal Apix': file_info['nominal_apix']
+            }
+            for file_info in files_data
+        ])
+        
+        # Return with selection enabled
+        from shiny import render
+        return render.DataGrid(
+            df, 
+            selection_mode="row",
+            filters=False
+        )
+
+    @output
     @render_widget  
     def fft_with_circle():
         from shiny import req
@@ -2225,8 +2409,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Add transparent scatter overlay to capture clicks and mouse events
         # Create a grid of invisible points that cover the entire FFT
         y_coords, x_coords = np.meshgrid(
-            np.arange(0, fft_arr.shape[0], 3),  # Every 3 pixels for performance
-            np.arange(0, fft_arr.shape[1], 3),  # Every 3 pixels for performance
+            np.arange(0, fft_arr.shape[0], 2),  # Every 2 pixels for performance
+            np.arange(0, fft_arr.shape[1], 2),  # Every 2 pixels for performance
             indexing='ij'
         )
         scatter_trace = go.Scatter(
@@ -2234,7 +2418,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             y=y_coords.flatten(),
             mode='markers',
             marker=dict(
-                size=2,  # Small size for dense grid
+                size=3,  # Small size for dense grid
                 opacity=0,  # Completely transparent
                 color='rgba(0,0,0,0)'  # Valid transparent color
             ),
@@ -2261,8 +2445,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             hovermode=False
         )
         
-        # Force square aspect ratio
-        fig.update_xaxes(scaleanchor="y", scaleratio=1)
+        # Force square display but allow arbitrary zoom box ratios
+        fig.update_xaxes(scaleanchor="y", scaleratio=1, constrain="domain")
+        fig.update_yaxes(constrain="domain")
 
         # Note: All shapes (circles, measurements, lattice points) are now handled by 
         # separate overlay effects to avoid re-rendering base FFT on state changes
@@ -2272,7 +2457,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             height=None,  # Allow natural sizing like original image
             margin=dict(l=10, r=10, t=10, b=10),  # Minimal margins
             autosize=True,
-            dragmode='pan',  # Keep pan mode for now, will be updated after circle is drawn
+            dragmode='zoom',  # Keep zoom mode as default
             modebar=dict(
                 add=[ 'zoom', 'pan', 'reset+autorange'],
                 remove=['select2d', 'lasso2d'],
@@ -2360,10 +2545,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                     new_state['resolution_click_y'] = click_y
                     fft_state.set(new_state)
                     
-                    # Update the figure with the new shape and enable shape editing
+                    # Update the figure with the new shape but keep zoom mode
                     with fw.batch_update():
                         fw.layout.shapes = [new_circle]
-                        fw.layout.dragmode = 'select'  # Enable shape selection/editing
+                        fw.layout.dragmode = 'zoom'  # Keep zoom mode after adding circle
                 else: # current_mode_now == 'Lattice Point':
                     print(f"=== LATTICE POINT MODE ===")
                     print(f"Click coordinates: x={click_x}, y={click_y}")
@@ -2505,12 +2690,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             r_samples_uncapped = int((0.5 * region_size) * r_freq)
             theta_samples_uncapped = int(360 * theta_freq)
             
-            r_samples = min(r_samples_uncapped, 2000)  # Cap at 2000 for better resolution
-            theta_samples = min(theta_samples_uncapped, 720)  # Cap at 720 for better angular resolution
+            r_samples = min(r_samples_uncapped, 10000)  # Cap at 2000 for better resolution
+            theta_samples = min(theta_samples_uncapped, 3600)  # Cap at 720 for better angular resolution
             
             # Show if capping occurred
-            r_capped = r_samples_uncapped > 2000
-            theta_capped = theta_samples_uncapped > 720
+            r_capped = r_samples_uncapped > 10000
+            theta_capped = theta_samples_uncapped > 3600
             print(f"🔧 NuFFT calculation params:")
             print(f"   r_samples: {r_samples}{' (CAPPED from ' + str(r_samples_uncapped) + ')' if r_capped else ''} → affects power curve smoothness")
             print(f"   theta_samples: {theta_samples}{' (CAPPED from ' + str(theta_samples_uncapped) + ')' if theta_capped else ''} → affects heatmap angular resolution")
@@ -2560,6 +2745,19 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             print("✅ NuFFT data calculated and cached successfully")
+            
+            # Clear green vertical lines from existing power curve widget since we have new data
+            existing_widget = nufft_power_widget.get()
+            if existing_widget is not None:
+                try:
+                    current_shapes = list(existing_widget.layout.shapes) if existing_widget.layout.shapes else []
+                    preserved_shapes = [shape for shape in current_shapes 
+                                      if not (hasattr(shape, 'line') and 
+                                             hasattr(shape.line, 'color') and 
+                                             shape.line.color == 'green')]
+                    existing_widget.layout.shapes = preserved_shapes
+                except Exception as e:
+                    print(f"Note: Could not clear green lines from existing widget: {e}")
             
         except Exception as e:
             print(f"❌ Error calculating NuFFT data: {e}")
@@ -2876,6 +3074,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Ensure square aspect ratio for FFT images
                 widget.layout.xaxis.scaleanchor = "y"
                 widget.layout.xaxis.scaleratio = 1
+                widget.layout.xaxis.constrain = "domain"
+                widget.layout.yaxis.constrain = "domain"
                 # Set margins to maximize image size within card
                 widget.layout.margin = dict(l=40, r=40, t=40, b=40)
             print("✅ FFT plot auto-scaled to fit card with square aspect ratio")
@@ -3317,7 +3517,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         freq_low = cached_power_data['freq_low']
         freq_high = cached_power_data['freq_high']
         display_range = cached_power_data['display_range']
-        apix_source = f"Cached Apix: {current_apix:.3f}"
+        apix_source = f"Nominal Apix: {current_apix:.3f}"
         
         print(f"   pwr_curve shape: {pwr_curve.shape if hasattr(pwr_curve, 'shape') else type(pwr_curve)}")
         print(f"   pwr shape: {pwr.shape if hasattr(pwr, 'shape') else type(pwr)}")
@@ -3429,6 +3629,15 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Create FigureWidget for click handling
             fw = go.FigureWidget(fig)
             
+            # Clear any existing green vertical lines from previous power curves
+            # This ensures green lines are reset when NuFFT is recalculated
+            current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
+            preserved_shapes = [shape for shape in current_shapes 
+                              if not (hasattr(shape, 'line') and 
+                                     hasattr(shape.line, 'color') and 
+                                     shape.line.color == 'green')]
+            fw.layout.shapes = preserved_shapes
+            
             # Store widget for click event access
             nufft_power_widget.set(fw)
             
@@ -3520,31 +3729,41 @@ def server(input: Inputs, output: Outputs, session: Session):
                                 # Set the filtered shapes first
                                 widget.layout.shapes = preserved_shapes
                             
-                            # Now add the green line using add_vline
+                            # Add the green line using add_shape method
                             try:
-                                widget.add_vline(
-                                    x=x_val,
-                                    line_color="green",
-                                    line_width=2,
-                                    line_dash="solid"
-                                )
-                                print("DEBUG: Green line added successfully using add_vline")
-                            except Exception as e:
-                                print(f"DEBUG: add_vline failed: {e}")
+                                # Get the current y-axis range from the widget for proper line positioning
+                                if len(widget.data) > 0 and len(widget.data[0].y) > 0:
+                                    y_min = min(widget.data[0].y)
+                                    y_max = max(widget.data[0].y)
+                                else:
+                                    y_min, y_max = 0, 1
                                 
-                                # Fallback to manual shape creation
+                                print(f"DEBUG: Adding green line with add_shape at x={x_val}, y_range={y_min} to {y_max}")
+                                
+                                # Use add_shape method which should force a redraw
+                                widget.add_shape(
+                                    type="line",
+                                    x0=x_val, x1=x_val,
+                                    y0=y_min-1, y1=y_max+1,
+                                    line=dict(color="green", width=2)
+                                )
+                                print(f"DEBUG: Green line added successfully using add_shape")
+                                
+                            except Exception as e:
+                                print(f"DEBUG: add_shape failed: {e}, trying fallback")
+                                
+                                # Fallback to direct layout manipulation
                                 with widget.batch_update():
                                     current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
                                     green_line_shape = {
                                         'type': 'line',
                                         'x0': x_val, 'x1': x_val,
-                                        'y0': 0, 'y1': 1,
-                                        'yref': 'paper',
-                                        'line': {'color': 'green', 'width': 2, 'dash': 'solid'}
+                                        'y0': y_min, 'y1': y_max,
+                                        'line': {'color': 'green', 'width': 3, 'dash': 'solid'}
                                     }
                                     current_shapes.append(green_line_shape)
                                     widget.layout.shapes = current_shapes
-                                    print("DEBUG: Green line added using manual shape creation")
+                                    print(f"DEBUG: Green line added using fallback method")
                         
                         # Update the apix slider directly to the tentative apix value
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.6f}")
@@ -4230,7 +4449,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_data = region_table_data.get()
         if len(current_data) == 0:
             # Yield empty CSV if no data
-            yield "Filename,Region Size,Region Location,Apix,Nominal\n"
+            yield "Filename,Region Size,Region Location,Apix,Nominal,Apix Stats\n"
         else:
             # Generate and yield CSV content
             csv_content = current_data.to_csv(index=False)
@@ -4829,13 +5048,35 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'Filename': [filename],
                 'Region Size': [region_size],
                 'Region Location': [region_location],
-                'Apix': [f"{apix_value:.3f}"],
-                'Nominal': [nominal_value]
+                'Apix': [f"{apix_value:.4f}"],
+                'Nominal': [nominal_value],
+                'Apix Stats': ['']  # Will be calculated after adding
             })
             
             # Add to existing table data
             current_data = region_table_data.get()
             updated_data = pd.concat([current_data, new_row], ignore_index=True)
+            
+            # Calculate statistics for each nominal value and update the Apix Stats column
+            def update_apix_stats(df):
+                df_copy = df.copy()
+                # Convert Apix column to float for calculations
+                df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Apix'], errors='coerce')
+                
+                # Group by nominal value and calculate stats
+                for nominal in df_copy['Nominal'].unique():
+                    mask = df_copy['Nominal'] == nominal
+                    apix_values = df_copy.loc[mask, 'Apix_numeric'].dropna()
+                    
+                    if len(apix_values) > 0:
+                        mean_val = apix_values.mean()
+                        std_val = apix_values.std() if len(apix_values) > 1 else 0.0
+                        stats_str = f"{mean_val:.4f} ± {std_val:.4f}"
+                        df_copy.loc[mask, 'Apix Stats'] = stats_str
+                
+                return df_copy.drop('Apix_numeric', axis=1)
+            
+            updated_data = update_apix_stats(updated_data)
             region_table_data.set(updated_data)
             
             print(f"Added row to region analysis table: {filename}, {region_size}, {region_location}, {apix_value:.3f}, {nominal_value}")
