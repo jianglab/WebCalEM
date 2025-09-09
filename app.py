@@ -102,25 +102,25 @@ Output:
     
 
 # Create the main UI using page_sidebar for proper Shiny styling
-app_ui = ui.page_sidebar(
-    ui.sidebar(
-        # App title and description in sidebar
-        ui.h1("Magnification Calibration", style="font-size: 24px; font-weight: bold; margin-bottom: 15px; color: #333;"),
-        ui.p("This tool helps calibrate electron microscopes by analyzing test specimen images.", 
-             style="font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.4;"),
-        # Add some basic help text
-        ui.div(
-            ui.h4("Quick Start:", style="font-size: 16px; font-weight: bold; margin-bottom: 10px;"),
-            ui.tags.ol(
-                ui.tags.li("Select input method (URL or Upload)"),
-                ui.tags.li("Choose region and calculate FFT"),
-                ui.tags.li("Analyze resolution patterns"),
-                style="font-size: 12px; line-height: 1.4; margin-left: 15px;"
-            ),
-            style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;"
-        ),
-        open="closed"
-    ),
+app_ui = ui.page_fillable(
+    # ui.sidebar(
+    #     # App title and description in sidebar
+    #     ui.h1("Magnification Calibration", style="font-size: 24px; font-weight: bold; margin-bottom: 15px; color: #333;"),
+    #     ui.p("This tool helps calibrate electron microscopes by analyzing test specimen images.", 
+    #          style="font-size: 13px; color: #666; margin-bottom: 10px; line-height: 1.4;"),
+    #     # Add some basic help text
+    #     ui.div(
+    #         ui.h4("Quick Start:", style="font-size: 16px; font-weight: bold; margin-bottom: 10px;"),
+    #         ui.tags.ol(
+    #             ui.tags.li("Select input method (URL or Upload)"),
+    #             ui.tags.li("Choose region and calculate FFT"),
+    #             ui.tags.li("Analyze resolution patterns"),
+    #             style="font-size: 12px; line-height: 1.4; margin-left: 15px;"
+    #         ),
+    #         style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;"
+    #     ),
+    #     open="closed"
+    # ),
     # Add custom CSS for enhanced styling
     ui.tags.head(
         ui.tags.style("""
@@ -130,8 +130,8 @@ app_ui = ui.page_sidebar(
                 align-items: center;
                 justify-content: center;
                 overflow: auto;
-                padding: 10px;
-                margin-bottom: 10px;
+                #padding: 5px;
+                #margin-bottom: 5px;
                 width: 100%;
                 min-height: 300px;
                 flex: 1;
@@ -147,7 +147,7 @@ app_ui = ui.page_sidebar(
             }
             .image-output::-webkit-scrollbar-thumb {
                 background-color: rgba(0, 0, 0, 0.3);
-                border-radius: 6px;
+                border-radius: 2px;
                 border: 2px solid transparent;
             }
             .image-output img {
@@ -155,7 +155,7 @@ app_ui = ui.page_sidebar(
                 width: auto;
                 max-width: none;
                 max-height: none;
-                margin-bottom: 12px;
+                margin-bottom: 8px;
             }
             /* Footer styles */
             .card-footer {
@@ -257,15 +257,19 @@ app_ui = ui.page_sidebar(
             });
         """)
     ),
+    # App title
+    ui.h1("Magnification Calibration", 
+          style="text-align: center; font-size: 28px; font-weight: bold; margin: 10px 0; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 5px;"),
+    
     # Primary analysis section - always visible
     ui.div(
-        {"style": "margin-bottom: 20px;"},
+        {"style": "margin-bottom: 10px;"},
         ui.layout_columns(
             ui.layout_sidebar(
                 ui.sidebar(
                     # Input method selection
                     ui.div(
-                        {"style": "margin-bottom: 10px;"},
+                        {"style": "margin-bottom: 5px;"},
                         ui.input_radio_buttons(
                             "input_method",
                             "Input Method:",
@@ -289,13 +293,13 @@ app_ui = ui.page_sidebar(
                         "input.input_method === 'Upload'",
                         ui.input_file("upload", "Upload images (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"], multiple=True),
                         ui.div(
-                        {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
+                        {"style": "flex: 1; overflow-y: auto; padding: 5px; min-height: 0;"},
                         ui.output_data_frame("upload_files_table"),
                     ),
                     ),
                     ui.div(
-                        {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 5px; margin-top: 10px; width: 100%;"},
-                        ui.tags.label("Nominal Apix (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0"}),
+                        {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 3px; margin-top: 5px; width: 100%;"},
+                        ui.tags.label("Nominal Pixel Size (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0"}),
                         ui.input_text("nominal_apix", None, value="1.00", width="80px"),
                     ),
                     ui.input_select("resolution_type", "Resolution Type", 
@@ -312,7 +316,7 @@ app_ui = ui.page_sidebar(
                     ui.card_header("Original Image"),
                     output_widget("image_display"),
                     ui.div(
-                        {"style": "display: flex; gap: 10px; padding: 10px; justify-content: center;"},
+                        {"style": "display: flex; gap: 5px; padding: 5px; justify-content: center;"},
                         #ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
                         ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
                     ),
@@ -325,14 +329,14 @@ app_ui = ui.page_sidebar(
             ),
             # Right column: FFT and Result cards stacked vertically
             ui.div(
-                {"style": "display: flex; flex-direction: column; gap: 15px; height: 100%;"},
+                {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
                 ui.card(
                     ui.card_header("FFT Analysis"),
                     ui.navset_tab(
                         ui.nav_panel(
                             "2D Spectrum",
                             ui.div(
-                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 15px;"},
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
                                 # Left side: FFT display
                                 ui.div(
                                     {"style": "width: 100%; height: 100%;"},
@@ -351,7 +355,7 @@ app_ui = ui.page_sidebar(
                                     # FFT Range slider - fixed position
                                     ui.div(
                                         {"style": "position: absolute; top: 57px; left: 10px; right: 10px;"},
-                                        ui.input_slider("contrast", "FFT Range (±σ)", min=0.1, max=5.0, value=1.0, step=0.1),
+                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1),
                                     ),
 
                                     # Buttons with fixed positions - well spaced
@@ -370,7 +374,7 @@ app_ui = ui.page_sidebar(
                         ui.nav_panel(
                             "NuFFT",
                             ui.div(
-                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 8px;"},
                                 # Left: Main content area with NuFFT heatmap and power curve
                                 ui.div(
                                     {"style": "height: 100%; display: flex; flex-direction: column;"},
@@ -387,28 +391,28 @@ app_ui = ui.page_sidebar(
                                 ),
                                 # Right: Controls spanning entire height
                                 ui.div(
-                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
+                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 5px;"},
                                     ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
                                     ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
                                     ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
                                     ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
                                     ui.div(
-                                        {"style": "margin-bottom: 10px;"},
+                                        {"style": "margin-bottom: 5px;"},
                                         ui.panel_conditional(
                                             "input.nufft_smooth",
                                             ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
                                         ),
                                     ),
                                     ui.div(
-                                        {"style": "margin-bottom: 10px;"},
+                                        {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=2, step=0.1),
                                     ),
                                     ui.div(
-                                        {"style": "margin-bottom: 10px;"},
+                                        {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=5, value=2, step=0.1),
                                     ),
                                     ui.div(
-                                        {"style": "margin-bottom: 10px;"},
+                                        {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_display_range", "Display Range (%)", min=1, max=10, value=3, step=0.5),
                                     ),
                                     # ui.input_action_button("nufft_find_apix", "Find Apix", class_="btn-primary"),
@@ -467,7 +471,7 @@ app_ui = ui.page_sidebar(
                 ui.card(
                     ui.card_header("Result"),
                     ui.div(
-                        {"style": "padding: 15px; display: flex; align-items: center; gap: 15px; min-height: 80px;"},
+                        {"style": "padding: 8px; display: flex; align-items: center; gap: 8px; min-height: 80px;"},
                         # Apix slider
                         ui.div(
                             {"style": "flex: 2;"},
@@ -493,7 +497,7 @@ app_ui = ui.page_sidebar(
     ),
     # Secondary analysis section - scrollable below
     ui.div(
-        {"style": "margin-top: 20px;"},
+        {"style": "margin-top: 10px;"},
         ui.card(
             ui.card_header("Region Analysis Table"),
             # Use row layout: table+buttons on left (55%), plot on right (45%), both full height
@@ -502,11 +506,11 @@ app_ui = ui.page_sidebar(
                 ui.div(
                     {"style": "display: flex; flex-direction: column; height: 500px;"},
                     ui.div(
-                        {"style": "flex: 1; overflow-y: auto; padding: 10px; min-height: 0;"},
+                        {"style": "flex: 1; overflow-y: auto; padding: 5px; min-height: 0;"},
                         ui.output_data_frame("region_table"),
                     ),
                     ui.div(
-                        {"style": "flex-shrink: 0; display: flex; gap: 10px; padding: 10px; justify-content: center; align-items: center; flex-wrap: wrap; border-top: 1px solid #dee2e6;"},
+                        {"style": "flex-shrink: 0; display: flex; gap: 5px; padding: 5px; justify-content: center; align-items: center; flex-wrap: wrap; border-top: 1px solid #dee2e6;"},
                         # ui.div(
                         #     {"style": "display: flex; gap: 5px; align-items: center;"},
                         #     #ui.input_action_button("random_generate", "Random Generate", class_="btn-info"),
@@ -534,7 +538,7 @@ app_ui = ui.page_sidebar(
                 ),
                 # Right column: Plot (45% width, 100% height)
                 ui.div(
-                    {"style": "height: 500px; padding: 10px; display: flex; flex-direction: column;"},
+                    {"style": "height: 500px; padding: 5px; display: flex; flex-direction: column;"},
                     ui.div(
                         {"style": "flex: 1; min-height: 0;"},
                         output_widget("apix_centered_by_nominal_plot"),
@@ -600,6 +604,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             'ellipse_params': state['ellipse_params'],
             'zoom_factor': state['zoom_factor']
         })
+    
+    # Flag to prevent duplicate image downloads during initialization
+    startup_download_completed = reactive.Value(False)
     
     # Handle file upload and populate upload table
     @reactive.Effect
@@ -2032,9 +2039,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         try:
             if input.input_method() == "URL":
                 url = input.download_url()
-                if url:  # Only download if URL is not empty
-                    print("Auto-downloading preset URL on app startup...")
-                    download_image_from_url(url)
+                # if url:  # Only download if URL is not empty
+                    # print("Auto-downloading preset URL on app startup...")
+                    # download_image_from_url(url)
         except Exception as e:
             print(f"Auto-download on startup failed: {e}")
 
@@ -2350,7 +2357,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Create empty DataFrame with the required columns
             empty_df = pd.DataFrame({
                 'File Name': [],
-                'Nominal Apix': []
+                'Nominal Pixel Size': []
             })
             return empty_df
         
@@ -2358,7 +2365,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         df = pd.DataFrame([
             {
                 'File Name': file_info['name'], 
-                'Nominal Apix': file_info['nominal_apix']
+                'Nominal Pixel Size': file_info['nominal_apix']
             }
             for file_info in files_data
         ])
@@ -2523,7 +2530,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         
                         # Update the apix slider with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
+                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
                     else:
                         print(f"Circle: center=({cx}, {cy}), radius={r:.2f}")
                         print("Could not calculate apix - resolution or radius is invalid")
@@ -3685,7 +3692,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         def on_click(trace, points, selector):
             """Handle click events on NuFFT power curve."""
-            print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
+            #print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
             if points.point_inds:
                 try:
                     # Get clicked point information
@@ -3725,7 +3732,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     if not is_green_line:
                                         preserved_shapes.append(shape)
                                 
-                                print(f"DEBUG: Preserved shapes count: {len(preserved_shapes)}")
+                                #print(f"DEBUG: Preserved shapes count: {len(preserved_shapes)}")
                                 
                                 # Set the filtered shapes first
                                 widget.layout.shapes = preserved_shapes
@@ -3739,7 +3746,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                                 else:
                                     y_min, y_max = 0, 1
                                 
-                                print(f"DEBUG: Adding green line with add_shape at x={x_val}, y_range={y_min} to {y_max}")
+                                #print(f"DEBUG: Adding green line with add_shape at x={x_val}, y_range={y_min} to {y_max}")
                                 
                                 # Use add_shape method which should force a redraw
                                 widget.add_shape(
@@ -4015,7 +4022,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @output
     @render_widget
     def apix_centered_by_nominal_plot():
-        """Live vertical scatter: Apix centered by nominal value, from region_table_data, using FigureWidget for in-place updates."""
+        """Live vertical scatter: Pixel size centered by nominal value, from region_table_data, using FigureWidget for in-place updates."""
         df = region_table_data.get().copy()
         if df is None or df.empty or 'Filename' not in df.columns or 'Apix' not in df.columns or 'Nominal' not in df.columns:
             #print("[DEBUG] DataFrame is empty or missing columns.")
