@@ -24,7 +24,7 @@ from compute import (
     calculate_distance_from_apix,
     calculate_tilt_angle,
     get_resolution_info,
-    # compute_fft_1d_data,
+    compute_fft_1d_data,
     # compute_fft_polar_heatmap_data,
     calibrateMag_process_one_region_advanced,
     resolution_to_radius,
@@ -260,72 +260,90 @@ app_ui = ui.page_fillable(
     # App title
     ui.h1("Magnification Calibration", 
           style="text-align: center; font-size: 28px; font-weight: bold; margin: 10px 0; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 5px;"),
-    
     # Primary analysis section - always visible
     ui.div(
         {"style": "margin-bottom: 10px;"},
         ui.layout_columns(
-            ui.layout_sidebar(
-                ui.sidebar(
-                    # Input method selection
-                    ui.div(
-                        {"style": "margin-bottom: 5px;"},
-                        ui.input_radio_buttons(
-                            "input_method",
-                            "Input Method:",
-                            choices=["URL", "Upload"],
-                            selected="URL",
-                            inline=True
-                        )
-                    ),
-                    # Conditional input based on selection
-                    ui.panel_conditional(
-                        "input.input_method === 'URL'",
-                        ui.input_text(
-                            "download_url",
-                            "Download URL:",
-                            value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff",
-                            placeholder="Enter image URL",
-                            width="100%"
-                        )
-                    ),
-                    ui.panel_conditional(
-                        "input.input_method === 'Upload'",
-                        ui.input_file("upload", "Upload images (.mrc,.tiff,.png)", accept=["image/*", ".mrc", ".tif", ".png"], multiple=True),
+            ui.card(
+                ui.card_header("Original Image"),
+                # Accordion panel with controls
+                ui.accordion(
+                    ui.accordion_panel(
+                        "Upload",
+                        # Input method selection with conditional panels
                         ui.div(
-                        {"style": "flex: 1; overflow-y: auto; padding: 5px; min-height: 0;"},
-                        ui.output_data_frame("upload_files_table"),
+                            {"style": "display: flex; gap: 10px; margin-bottom: 5px; width: 100%;"},
+                            # Left side: Radio buttons and inputs
+                            ui.div(
+                                {"style": "flex: 4; display: flex; flex-direction: column; gap: 5px;"},
+                                ui.input_radio_buttons(
+                                    "input_method",
+                                    "Input Method:",
+                                    choices=["URL", "Upload (.mrc,.tiff,.png)"],
+                                    selected="URL",
+                                    inline=True
+                                ),
+                                # Conditional input for URL
+                                ui.panel_conditional(
+                                    "input.input_method === 'URL'",
+                                    ui.input_text(
+                                        "download_url",
+                                        "Download URL:",
+                                        value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff",
+                                        placeholder="Enter image URL",
+                                        width="100%"
+                                    )
+                                ),
+                                # Conditional input for Upload
+                                ui.panel_conditional(
+                                    "input.input_method === 'Upload (.mrc,.tiff,.png)'",
+                                    ui.input_file("upload", None, accept=["image/*", ".mrc", ".tif", ".png"], multiple=True)
+                                )
+                            ),
+                            # Right side: Upload files table (only visible when Upload is selected)
+                            ui.panel_conditional(
+                                "input.input_method === 'Upload (.mrc,.tiff,.png)'",
+                                ui.div(
+                                    {"style": "flex: 6; overflow-y: auto; padding: 2px; min-height: 0; max-height: 170px;"},
+                                    ui.output_data_frame("upload_files_table"),
+                                )
+                            )
+                        ),
+                        ui.div(
+                            {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 10px; margin-top: 5px; width: 100%;"},
+                            ui.div(
+                                {"style": "display: flex; flex-direction: column; gap: 5px;"},
+                                ui.tags.label("Nominal Pixel Size", {"for": "nominal_apix", "style": "margin-bottom: 0","width":"80px"}),
+                                ui.input_numeric("nominal_apix", None, value=1.00, min=0.01, max=10.0, step=0.01, width="80px"),
+                            ),
+                            ui.div(
+                                {"style": "display: flex; align-items: flex-start; gap: 10px;"},
+                                ui.input_select("resolution_type", "Resolution Type", 
+                                    choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
+                                    selected="Graphene (2.13 Å)",
+                                    width="180px"),
+                                ui.panel_conditional(
+                                    "input.resolution_type == 'Custom'",
+                                    ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="120px")
+                                )
+                            )
+                        ),
+                        open="closed"
                     ),
-                    ),
-                    ui.div(
-                        {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 3px; margin-top: 5px; width: 100%;"},
-                        ui.tags.label("Nominal Pixel Size (Å/px)", {"for": "nominal_apix", "style": "margin-bottom: 0"}),
-                        ui.input_text("nominal_apix", None, value="1.00", width="80px"),
-                    ),
-                    ui.input_select("resolution_type", "Resolution Type", 
-                        choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
-                        selected="Graphene (2.13 Å)"),
-                    ui.panel_conditional(
-                        "input.resolution_type == 'Custom'",
-                        ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="120px"),
-                    ),
-                    width="300px",
-                    open="closed"
+                    open=False,
+                    multiple=False
                 ),
-                ui.card(
-                    ui.card_header("Original Image"),
-                    output_widget("image_display"),
-                    ui.div(
-                        {"style": "display: flex; gap: 5px; padding: 5px; justify-content: center;"},
-                        #ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
-                        ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
-                    ),
-                    # ui.div(
-                    #     {"class": "card-footer"},
-                    #     "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
-                    # ),
-                    full_screen=True,
+                output_widget("image_display"),
+                ui.div(
+                    {"style": "display: flex; gap: 5px; padding: 5px; justify-content: center;"},
+                    #ui.input_action_button("clear_drawn_region", "Clear Selection", class_="btn-secondary"),
+                    ui.input_action_button("calc_fft", "Calc FFT", class_="btn-primary"),
                 ),
+                # ui.div(
+                #     {"class": "card-footer"},
+                #     "Use box selection tool to drag and select regions (you'll see red dots), then click 'Calc FFT' to analyze.",
+                # ),
+                full_screen=True,
             ),
             # Right column: FFT and Result cards stacked vertically
             ui.div(
@@ -360,7 +378,7 @@ app_ui = ui.page_fillable(
 
                                     # Buttons with fixed positions - well spaced
                                     ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("tune_markers", "Tune Markers", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("tune_markers", "Autocorrect", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
                                     ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
                                     ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
                                     # Tilt output - fixed position
@@ -471,25 +489,30 @@ app_ui = ui.page_fillable(
                 ui.card(
                     ui.card_header("Result"),
                     ui.div(
-                        {"style": "padding: 8px; display: flex; align-items: center; gap: 8px; min-height: 80px;"},
+                        {"style": "padding: 8px; display: flex; align-items: center; gap: 12px; min-height: 80px;"},
                         # Apix slider
-                        ui.div(
-                            {"style": "flex: 2;"},
-                            ui.input_slider("apix_slider", "Pixel Size (Å/px)", min=0.01, max=2.0, value=1.0, step=0.0001),
-                        ),
+                        #ui.div(
+                        #{"style": "flex: 5; display: flex; align-items: flex-end; gap: 5px;"},
+                        ui.tags.label("Pixel Size (Å/px):", {"for": "apix_slider", "style": "margin: 0; white-space: nowrap;"}),
+                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%"),
+                            # ui.div(
+                            #     {"style": "flex: 1; display: flex; align-items: flex-end;"},
+                            #     ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%")
+                            # ),
+                        #),
                         # Apix exact input and Set button
-                        ui.div(
-                            {"style": "display: flex; align-items: center; gap: 5px; flex: 1;"},
-                            ui.input_text("apix_exact_str", "Exact Value:", value="1.0", width="80px"),
-                            ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
-                        ),
+                        #ui.div(
+                            #{"style": "display: flex; align-items: flex-end; gap: 5px; flex: 3;"},
+                            #ui.tags.label("Exact Value:", {"for": "apix_exact_str", "style": "margin: 0; white-space: nowrap;"}),
+                        ui.input_text("apix_exact_str", None, value="1.0", width="160px"),
+
+                        ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
+                        #),
                         # Add to Table button
-                        ui.div(
-                            {"style": "flex: 1; display: flex; align-items: center;"},
-                            ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%; display: flex; align-items: center; justify-content: center;"),
-                        )
+                        ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%;max-width: 200px; display: flex; align-items: center; justify-content: center;"),
+
                     ),
-                    style="flex: 0 0 auto; min-height: 100px;"
+                    style="flex: 1 2 2 1 2;min-height: 100px;"
                 )
             ),
             col_widths=[5, 7],
@@ -640,7 +663,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         if files_info:
             selected_file_index.set(0)
             # Set the nominal apix from the first file
-            ui.update_text("nominal_apix", value=str(files_info[0]['nominal_apix']))
+            ui.update_numeric("nominal_apix", value=files_info[0]['nominal_apix'])
     
     # Handle table row selection for file switching  
     @reactive.Effect
@@ -659,7 +682,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     files_data = uploaded_files_data.get()
                     if files_data and new_index < len(files_data):
                         selected_file = files_data[new_index]
-                        ui.update_text("nominal_apix", value=str(selected_file['nominal_apix']))
+                        ui.update_numeric("nominal_apix", value=selected_file['nominal_apix'])
         except Exception as e:
             print(f"Error handling table selection: {e}")
     
@@ -873,7 +896,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _():
         """Initialize Fit button state."""
         is_disabled = input.label_mode() != "Lattice Point"
-        # Tune Markers now works in both modes, so don't disable it
+        # Tune Markers now works in both modes
         ui.update_action_button("fit_markers", disabled=is_disabled, session=session)
         ui.update_action_button("estimate_tilt", disabled=is_disabled, session=session)
     
@@ -1787,7 +1810,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Extract nominal apix from filename and update the textbox and slider
             nominal_value = extract_nominal(original_filename)
-            ui.update_text("nominal_apix", value=f"{nominal_value:.2f}", session=session)
+            ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
             ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
@@ -1923,7 +1946,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Extract nominal apix from filename and update UI
             nominal_value = extract_nominal(original_filename)
-            ui.update_text("nominal_apix", value=f"{nominal_value:.2f}", session=session)
+            ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
             ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
@@ -2357,7 +2380,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Create empty DataFrame with the required columns
             empty_df = pd.DataFrame({
                 'File Name': [],
-                'Nominal Pixel Size': []
+                'Nominal Size': []
             })
             return empty_df
         
@@ -2365,7 +2388,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         df = pd.DataFrame([
             {
                 'File Name': file_info['name'], 
-                'Nominal Pixel Size': file_info['nominal_apix']
+                'Nominal Size': file_info['nominal_apix']
             }
             for file_info in files_data
         ])
@@ -2375,7 +2398,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         return render.DataGrid(
             df, 
             selection_mode="row",
-            filters=False
+            filters=False,
+            width={"File Name": "70%", "Nomimal Size": "30%"}
         )
 
     @output
