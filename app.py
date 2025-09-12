@@ -1402,89 +1402,94 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"Tuned {len(tuned_points)} lattice markers using 2D Gaussian fitting.")
             
         elif current_mode == 'Resolution Ring':
-            # Resolution Ring mode: 1D radial profile Gaussian fitting
+            # Resolution Ring mode: Local maximum search around clicked pixel
             current_state = fft_state.get()
-            resolution_radius = current_state.get('resolution_radius')
+            click_x = current_state.get('resolution_click_x')
+            click_y = current_state.get('resolution_click_y')
             
-            if resolution_radius is None:
-                print("No resolution ring available for tuning.")
+            if click_x is None or click_y is None:
+                print("No click location available for Resolution Ring autocorrect.")
                 return
                 
-            # Get 1D FFT data for radial profile
-            plot_data = fft_1d_data()
-            if plot_data is None:
-                print("No 1D FFT data available for tuning.")
+            # Get the cached FFT image data
+            cached_fft = cached_fft_image.get()
+            if cached_fft is None:
+                print("No FFT image available for autocorrect.")
                 return
                 
-            x_data = plot_data['x_data']
-            y_data = plot_data['y_data']
-            
-            # Find the closest data point to the clicked resolution radius
-            radius_idx = np.argmin(np.abs(x_data - resolution_radius))
-            original_radius = x_data[radius_idx]
-            
-            # Use same window size as Find Max function for consistency
-            window_half_size = input.gaussian_window() / 2.0
-            
-            # Find indices within ±window_half_size pixels (same as Find Max)
-            mask = np.abs(x_data - original_radius) <= window_half_size
-            
-            if np.sum(mask) < 5:
-                print(f"Not enough points for 1D Gaussian fitting around radius {original_radius:.2f}")
-                return
+            # Convert PIL image to numpy array for processing
+            fft_array = np.array(cached_fft)
+            if len(fft_array.shape) == 3:  # RGB image
+                fft_array = np.mean(fft_array, axis=2)  # Convert to grayscale
                 
-            # Extract window data
-            fit_x = x_data[mask]
-            fit_y = y_data[mask]
+            N = fft_array.shape[0]  # Assuming square image
             
+            # Search for local maximum in 10x10 neighborhood around clicked location
+            search_size = 10
+            half_size = search_size // 2
+            click_xi, click_yi = int(round(click_x)), int(round(click_y))
+            
+            print(f"DEBUG: Searching for local maximum around clicked location ({click_x:.1f}, {click_y:.1f})")
+            
+            # Define search bounds
+            x_min = max(0, click_xi - half_size)
+            x_max = min(N, click_xi + half_size + 1)
+            y_min = max(0, click_yi - half_size) 
+            y_max = min(N, click_yi + half_size + 1)
+            
+            # Extract neighborhood and find local maximum
+            neighborhood = fft_array[y_min:y_max, x_min:x_max]
+            max_idx = np.unravel_index(np.argmax(neighborhood), neighborhood.shape)
+            
+            # Convert back to full image coordinates
+            refined_y = y_min + max_idx[0]
+            refined_x = x_min + max_idx[1]
+            
+            print(f"DEBUG: Local maximum found at ({refined_x}, {refined_y})")
+            
+            # Calculate the refined radius from image center
+            center_x, center_y = N / 2, N / 2
+            refined_radius = np.sqrt((refined_x - center_x)**2 + (refined_y - center_y)**2)
+            
+            # Store tuned resolution ring and update FFT state with refined coordinates
+            tuned_resolution_radius.set(refined_radius)
+            
+            # Update FFT state with refined click coordinates so the cyan ring moves
+            updated_state = current_state.copy()
+            updated_state['resolution_click_x'] = refined_x
+            updated_state['resolution_click_y'] = refined_y
+            updated_state['resolution_radius'] = refined_radius
+            fft_state.set(updated_state)
+            
+            print(f"Local maximum search: radius {np.sqrt((click_x - center_x)**2 + (click_y - center_y)**2):.3f} -> {refined_radius:.3f}")
+            print(f"Updated click coordinates: ({click_x:.1f}, {click_y:.1f}) -> ({refined_x}, {refined_y})")
+            
+            # Calculate and update apix based on refined radius
+            calc_state = fft_calculation_state.get()
             try:
-                # Define Gaussian function (identical to Find Max)
-                def gaussian(x, a, mu, sigma, c):
-                    return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2)) + c
+                resolution_type = input.resolution_type()
+                custom_resolution = input.custom_resolution()
+            except:
+                # Fallback to calc_state values
+                resolution_type = calc_state['resolution_type']
+                custom_resolution = calc_state['custom_resolution']
+            
+            print(f"DEBUG: Using resolution_type: {resolution_type}, custom_resolution: {custom_resolution}")
+            resolution, _ = get_resolution_info(resolution_type, custom_resolution)
+            print(f"DEBUG: Resolved resolution: {resolution}")
+            if resolution is not None:
+                # Calculate apix based on refined radius
+                fft_image_size = cached_fft.size[0]  # PIL image size
+                calculated_apix = (refined_radius * resolution) / fft_image_size
+                print(f"DEBUG: FFT size: {fft_image_size}, calculated apix: {calculated_apix:.6f}")
                 
-                # Initial parameter guesses (identical to Find Max)
-                max_y_fit = np.max(fit_y)  # Find maximum in fitting window
-                a_guess = max_y_fit  # amplitude (absolute maximum value)
-                mu_guess = original_radius  # center
-                sigma_guess = 1.0     # width
-                c_guess = np.min(fit_y)  # offset
-                
-                # Fit Gaussian (identical to Find Max)
-                from scipy.optimize import curve_fit
-                popt, _ = curve_fit(
-                    gaussian, 
-                    fit_x, 
-                    fit_y,
-                    p0=[a_guess, mu_guess, sigma_guess, c_guess],
-                    maxfev=1000
-                )
-                
-                # Extract fitted parameters (identical to Find Max)
-                a_fit, mu_fit, sigma_fit, c_fit = popt
-                tuned_radius = mu_fit
-                
-                # Store tuned resolution ring
-                tuned_resolution_radius.set(tuned_radius)
-                print(f"1D Gaussian fit: radius {original_radius:.3f} -> {tuned_radius:.5f}, σ={sigma_fit:.3f}")
-                
-                # Calculate and update apix based on tuned radius
-                resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
-                if resolution is not None:
-                    # Get FFT image size for apix calculation
-                    cached_fft = cached_fft_image.get()
-                    if cached_fft is not None:
-                        fft_image_size = cached_fft.size[0]  # PIL image size
-                        calculated_apix = (tuned_radius * resolution) / fft_image_size
-                        
-                        # Update the apix slider with the tuned value
-                        ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
-                        print(f"Updated apix to {calculated_apix:.3f} Å/px based on tuned resolution ring.")
-                
-                print(f"Tuned resolution ring using 1D radial profile Gaussian fitting.")
-                
-            except Exception as e:
-                print(f"1D Gaussian fitting failed for radius {original_radius:.3f}: {e}")
+                # Update the apix slider with the refined value
+                print(f"DEBUG: Updating UI with apix: {calculated_apix:.3f}")
+                ui.update_slider("apix_slider", value=calculated_apix, session=session)
+                ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
+                print(f"DEBUG: UI update completed - Updated apix to {calculated_apix:.3f} Å/px based on refined resolution ring.")
+            
+            print(f"Autocorrect completed using local maximum search.")
                 
         else:
             print(f"Tune Markers not supported for mode: {current_mode}")
@@ -2444,6 +2449,41 @@ def server(input: Inputs, output: Outputs, session: Session):
             np.arange(0, fft_arr.shape[1], 2),  # Every 2 pixels for performance
             indexing='ij'
         )
+        
+        # Calculate tentative apix for each point in the grid
+        # Get current parameters for calculation
+        try:
+            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else 1.0
+            resolution_type = input.resolution_type()
+            custom_resolution = input.custom_resolution()
+        except:
+            nominal_apix = 1.0
+            resolution_type = 'Graphene'
+            custom_resolution = None
+            
+        # Get target resolution
+        target_resolution, _ = get_resolution_info(resolution_type, custom_resolution)
+        if target_resolution is None:
+            target_resolution = 2.13  # Default to graphene
+            
+        # Calculate tentative apix for each grid point
+        # Distance from center to each point
+        center_x, center_y = fft_arr.shape[1] / 2, fft_arr.shape[0] / 2
+        distances = np.sqrt((x_coords - center_x)**2 + (y_coords - center_y)**2)
+        
+        # Convert distance to spatial frequency (1/Å)
+        # For FFT: spatial_freq = distance_in_pixels / (image_size_in_pixels * apix)
+        fft_image_size = fft_arr.shape[0]  # Assuming square
+        target_spatial_freq = 1.0 / target_resolution
+        
+        # Calculate tentative apix: what apix would make this distance correspond to target resolution
+        # From: spatial_freq = distance / (size * apix)
+        # Solve for apix: apix = distance / (size * spatial_freq)
+        tentative_apix_array = distances / (fft_image_size * target_spatial_freq)
+        
+        # Avoid division by zero for center point
+        tentative_apix_array = np.where(distances == 0, nominal_apix, tentative_apix_array)
+        
         scatter_trace = go.Scatter(
             x=x_coords.flatten(),
             y=y_coords.flatten(),
@@ -2455,7 +2495,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             ),
             hoverinfo='skip',  # Enable hover for click events
             showlegend=False,
-            hovertemplate='<b>FFT</b><br>x: %{x}<br>y: %{y}<extra></extra>'
+            hovertemplate='<b>Distance from center:</b> %{customdata[0]:.1f} px<br>' +
+                         '<b>Tentative Apix:</b> %{customdata[1]:.4f} Å/px<br>' +
+                         '<b>For resolution:</b> ' + f'{target_resolution:.3f} Å<extra></extra>',
+            customdata=np.column_stack([distances.flatten(), tentative_apix_array.flatten()])
         )
         fig.add_trace(scatter_trace)
         
@@ -2534,10 +2577,36 @@ def server(input: Inputs, output: Outputs, session: Session):
                 
                 # Only handle clicks in Resolution Ring mode
                 if current_mode_now == 'Resolution Ring':
-                    # Calculate circle centered at image center through click point
+                    # Find local maximum around click point
                     N = fft_arr.shape[0]
                     cx = cy = N/2
-                    r = ((click_x-cx)**2 + (click_y-cy)**2)**0.5
+                    
+                    # Search for local maximum in 5x5 neighborhood around click
+                    search_size = 5
+                    half_size = search_size // 2
+                    click_xi, click_yi = int(round(click_x)), int(round(click_y))
+                    
+                    # Define search bounds
+                    x_min = max(0, click_xi - half_size)
+                    x_max = min(N, click_xi + half_size + 1)
+                    y_min = max(0, click_yi - half_size) 
+                    y_max = min(N, click_yi + half_size + 1)
+                    
+                    # Extract neighborhood
+                    neighborhood = fft_arr[y_min:y_max, x_min:x_max]
+                    
+                    # Find local maximum
+                    max_idx = np.unravel_index(np.argmax(neighborhood), neighborhood.shape)
+                    max_y_local, max_x_local = max_idx
+                    
+                    # Convert back to full image coordinates
+                    max_x = x_min + max_x_local
+                    max_y = y_min + max_y_local
+                    
+                    print(f"DEBUG: Click at ({click_x:.1f}, {click_y:.1f}), found local max at ({max_x}, {max_y})")
+                    
+                    # Calculate circle radius from image center to the local maximum
+                    r = ((max_x-cx)**2 + (max_y-cy)**2)**0.5
                     
                     # Get current resolution setting
                     resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
@@ -2572,8 +2641,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                     current_state = fft_state.get()
                     new_state = current_state.copy()
                     new_state['resolution_radius'] = r
-                    new_state['resolution_click_x'] = click_x
-                    new_state['resolution_click_y'] = click_y
+                    new_state['resolution_click_x'] = max_x  # Store local maximum coordinates
+                    new_state['resolution_click_y'] = max_y  # Store local maximum coordinates
                     fft_state.set(new_state)
                     
                     # Update the figure with the new shape but keep zoom mode
