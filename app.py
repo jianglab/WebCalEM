@@ -935,7 +935,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     return
                 #apix_master.set(val)
                 ui.update_slider("apix_slider", value=val, session=session)
-                ui.update_text("apix_exact_str", value=str(round(val, 3)), session=session)
+                ui.update_text("apix_exact_str", value=str(round(val, 4)), session=session)
                 # Clear 1D plot clicked position when apix changes from Set button
                 #plot_1d_click_pos.set({'x': None, 'y': None})
         except Exception:
@@ -1481,13 +1481,13 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Calculate apix based on refined radius
                 fft_image_size = cached_fft.size[0]  # PIL image size
                 calculated_apix = (refined_radius * resolution) / fft_image_size
-                print(f"DEBUG: FFT size: {fft_image_size}, calculated apix: {calculated_apix:.6f}")
+                print(f"DEBUG: FFT size: {fft_image_size}, calculated apix: {calculated_apix:.4f}")
                 
                 # Update the apix slider with the refined value
-                print(f"DEBUG: Updating UI with apix: {calculated_apix:.3f}")
+                print(f"DEBUG: Updating UI with apix: {calculated_apix:.4f}")
                 ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                ui.update_text("apix_exact_str", value=f"{calculated_apix:.3f}", session=session)
-                print(f"DEBUG: UI update completed - Updated apix to {calculated_apix:.3f} Å/px based on refined resolution ring.")
+                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
+                print(f"DEBUG: UI update completed - Updated apix to {calculated_apix:.4f} Å/px based on refined resolution ring.")
             
             print(f"Autocorrect completed using local maximum search.")
                 
@@ -2075,7 +2075,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     @reactive.Effect
     def _():
-        """Set up initial region and automatically calculate FFT when image loads."""
+        """Set up initial region when image loads."""
         current_image = binned_image_data.get()
         current_zoom_state = image_zoom_state.get()
         
@@ -2101,28 +2101,33 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_zoom_state.set(new_zoom_state)
             
             print(f"✅ Pre-selected initial region: X[300,700] Y[300,700]")
+
+    @reactive.Effect
+    def _():
+        """Auto-calculate FFT when image and region are ready."""
+        current_image = binned_image_data.get()
+        current_zoom_state = image_zoom_state.get()
+        current_fft = cached_fft_image.get()
+        current_calc_state = fft_calculation_state.get()
+        
+        # Only auto-calculate if we have image, region, but no FFT yet
+        if (current_image is not None and 
+            current_zoom_state.get('drawn_region') is not None and
+            current_zoom_state.get('is_zoomed') == True and
+            current_fft is None and 
+            current_calc_state.get('region') is None):
             
-        # If we have both image data and a pre-selected region, auto-calculate FFT
-        elif (current_image is not None and 
-              current_zoom_state.get('drawn_region') is not None and
-              current_zoom_state.get('is_zoomed') == True):
+            print("🚀 Auto-calculating FFT for pre-selected region...")
+            print(f"   Current zoom state drawn_region: {current_zoom_state.get('drawn_region')}")
             
-            # Only auto-calculate once per image load by checking if FFT is already calculated
-            current_fft = cached_fft_image.get()
-            current_calc_state = fft_calculation_state.get()
+            # Trigger FFT calculation by incrementing the base trigger (same as manual Calc FFT button)
+            current_trigger = base_fft_trigger.get()
+            base_fft_trigger.set(current_trigger + 1)
             
-            if current_fft is None and current_calc_state.get('region') is None:
-                print("🚀 Auto-calculating FFT for pre-selected region...")
-                print(f"   Current zoom state drawn_region: {current_zoom_state.get('drawn_region')}")
-                
-                # Trigger FFT calculation by incrementing the base trigger (same as manual Calc FFT button)
-                current_trigger = base_fft_trigger.get()
-                base_fft_trigger.set(current_trigger + 1)
-                
-                # Also trigger autoscale (same as manual Calc FFT button)
-                autoscale_trigger.set(autoscale_trigger.get() + 1)
-                
-                print("✅ Automatic FFT calculation triggered")
+            # Also trigger autoscale (same as manual Calc FFT button)
+            autoscale_trigger.set(autoscale_trigger.get() + 1)
+            
+            print("✅ Automatic FFT calculation triggered")
 
     # FFT calculation is now done directly in fft_with_circle widget function
 
@@ -2420,6 +2425,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             return None
         
         print("=== CREATING NEW FFT WIDGET (should only happen on Calc FFT) ===")
+        print(f"DEBUG: fft_with_circle triggered - cached_fft exists: {cached_fft is not None}")
         
         # Use the cached FFT image (already has current contrast applied)
         fft_img = cached_fft.copy()
@@ -2451,15 +2457,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         )
         
         # Calculate tentative apix for each point in the grid
-        # Get current parameters for calculation
-        try:
-            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else 1.0
-            resolution_type = input.resolution_type()
-            custom_resolution = input.custom_resolution()
-        except:
-            nominal_apix = 1.0
-            resolution_type = 'Graphene'
-            custom_resolution = None
+        # Use static values to avoid reactive dependencies during widget creation
+        # These will be used only for initial hover calculations
+        nominal_apix = 1.0  # Default value
+        resolution_type = 'Graphene'  # Default resolution
+        custom_resolution = None
             
         # Get target resolution
         target_resolution, _ = get_resolution_info(resolution_type, custom_resolution)
@@ -2539,8 +2541,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 color='black',
                 activecolor='red'
             ),
-            # Use simple uirevision based only on base FFT trigger to prevent multiple figure creation
-            uirevision=f"fft-base-{base_fft_trigger.get()}",
+            # Use stable uirevision to prevent unnecessary re-renders
+            uirevision="fft-widget-stable",
             # Enable click events
             clickmode='event',
             hovermode='closest',
@@ -3674,10 +3676,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 mode='lines',
                 name='Power Curve',
                 line=dict(color='blue', width=2),
-                hovertemplate='<b>Resolution:</b> %{customdata[0]:.3f} Å<br>' +
-                             '<b>Spatial Freq:</b> %{x:.4f} Å⁻¹<br>' +
-                             '<b>Intensity:</b> %{y:.3f}<br>' +
-                             '<b>Tentative Apix:</b> %{customdata[1]:.4f} Å/px<extra></extra>',
+                hovertemplate='<b>Tentative Apix:</b> %{customdata[1]:.4f} Å/px<br>' +
+                             '<b>For resolution:</b> ' + f'{target_resolution:.3f} Å<extra></extra>',
                 customdata=np.column_stack([res_range_array, tentative_apix_array])
             ))
             
@@ -3867,7 +3867,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     print(f"DEBUG: Green line added using fallback method")
                         
                         # Update the apix slider directly to the tentative apix value
-                        ui.update_text("apix_exact_str", value=f"{tentative_apix:.6f}")
+                        ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
                         ui.update_slider("apix_slider", value=tentative_apix)
                         
                     # If tentative_apix is None, do nothing

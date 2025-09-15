@@ -1182,11 +1182,11 @@ def nufft_resolution_range(images, apix, res_low=0, res_high=0, r_samples=-1, th
     
     if len(images.shape) > 2:
         if len(images) > 1:
-            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex64), eps=1e-6)
         else:
-            fft = nufft2d2(x=X, y=Y, f=images[0].astype(np.complex128), eps=1e-6)
+            fft = nufft2d2(x=X, y=Y, f=images[0].astype(np.complex64), eps=1e-6)
     else:
-        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
+        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex64), eps=1e-6)
     
     if len(images.shape) > 2:
         new_shape = list(images.shape[:-2]) + list(R.shape)
