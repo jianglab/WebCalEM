@@ -1182,11 +1182,11 @@ def nufft_resolution_range(images, apix, res_low=0, res_high=0, r_samples=-1, th
     
     if len(images.shape) > 2:
         if len(images) > 1:
-            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex64), eps=1e-6)
+            fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
         else:
             fft = nufft2d2(x=X, y=Y, f=images[0].astype(np.complex64), eps=1e-6)
     else:
-        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex64), eps=1e-6)
+        fft = nufft2d2(x=X, y=Y, f=images.astype(np.complex128), eps=1e-6)
     
     if len(images.shape) > 2:
         new_shape = list(images.shape[:-2]) + list(R.shape)
@@ -1195,6 +1195,121 @@ def nufft_resolution_range(images, apix, res_low=0, res_high=0, r_samples=-1, th
     
     fft = fft.reshape(new_shape)
     return fft
+
+
+def nufft_highest_point(images, apix, res_low=0, res_high=0, percentile=5, return_coords=False):
+    """
+    Non-uniform FFT implementation that samples only the highest intensity points.
+    
+    Args:
+        images: Input image(s) as numpy array
+        apix: Pixel size in Å/pixel
+        res_low: Low resolution limit (Å), 0 means no limit
+        res_high: High resolution limit (Å), 0 means Nyquist
+        percentile: Percentage of highest intensity points to sample (default 5%)
+        return_coords: If True, also return the spatial frequency coordinates
+        
+    Returns:
+        Complex FFT result sampled at highest intensity points
+        If return_coords=True, returns (fft_result, spatial_frequencies)
+    """
+    if not FINUFFT_AVAILABLE:
+        raise ImportError("finufft package is required for non-uniform FFT. Please install with: pip install finufft")
+    
+    # Handle single image case
+    if len(images.shape) == 2:
+        images = images[np.newaxis, ...]
+    
+    # Get image dimensions
+    ny, nx = images.shape[-2:]
+    center_y, center_x = ny // 2, nx // 2
+    
+    # Create coordinate arrays
+    y_coords, x_coords = np.ogrid[:ny, :nx]
+    y_coords = y_coords - center_y
+    x_coords = x_coords - center_x
+    
+    # Calculate radial distances in frequency space
+    R_pixels = np.sqrt(x_coords**2 + y_coords**2)
+    
+    # Convert pixel distances to spatial frequencies (1/Å)
+    R_freq = R_pixels / (min(ny, nx) * apix)
+    
+    # Apply resolution limits
+    R0 = 1 / res_low if res_low > 0 else 0
+    R1 = 1 / res_high if res_high > 0 else 1 / (2 * apix)
+    
+    # Create mask for resolution range
+    mask = (R_freq >= R0) & (R_freq <= R1)
+    
+    # Get the first image for intensity-based sampling
+    sample_image = images[0] if len(images) > 1 else images[0]
+    
+    # Calculate FFT for intensity analysis
+    fft_full = np.fft.fftshift(np.fft.fft2(sample_image))
+    fft_intensity = np.abs(fft_full)
+    
+    # Apply resolution mask
+    masked_intensity = np.where(mask, fft_intensity, 0)
+    
+    # Find highest intensity points within the resolution range
+    valid_indices = np.where(mask)
+    valid_intensities = masked_intensity[valid_indices]
+    
+    if len(valid_intensities) == 0:
+        # Handle division by zero for R0 for error message
+        res_high_str = f"{1/R1:.2f}" if R1 > 0 else "inf"
+        res_low_str = f"{1/R0:.2f}" if R0 > 0 else "inf"
+        print(f"ERROR: No points found in the specified resolution range {res_high_str} - {res_low_str} Å")
+        return None if not return_coords else (None, None)
+    
+    # Calculate threshold for top percentile
+    threshold = np.percentile(valid_intensities, 100 - percentile)
+    
+    # Get coordinates of highest intensity points
+    high_intensity_mask = masked_intensity >= threshold
+    y_indices, x_indices = np.where(high_intensity_mask)
+    
+    # Convert to centered coordinates
+    y_centered = y_indices - center_y
+    x_centered = x_indices - center_x
+    
+    # Calculate spatial frequencies for the selected points
+    spatial_freqs = np.sqrt(x_centered**2 + y_centered**2) / (min(ny, nx) * apix)
+    
+    # Convert to frequency coordinates for NUFFT
+    # NUFFT expects coordinates in [-π, π] range
+    Y = 2 * np.pi * y_centered / ny
+    X = 2 * np.pi * x_centered / nx
+    
+    print(f"Selected {len(X)} points ({percentile}% of {np.sum(mask)} valid points)")
+    # Handle division by zero for R0
+    res_high_str = f"{1/R1:.2f}" if R1 > 0 else "inf"
+    res_low_str = f"{1/R0:.2f}" if R0 > 0 else "inf"
+    print(f"Resolution range: {res_high_str} - {res_low_str} Å")
+    print(f"Intensity threshold: {threshold:.2e}")
+    
+    # Perform NUFFT for each image
+    results = []
+    for i in range(len(images)):
+        if len(images) > 1:
+            img = images[i]
+        else:
+            img = images[0] if len(images.shape) > 2 else images
+            
+        # Perform NUFFT at selected high-intensity points
+        fft_result = nufft2d2(x=X, y=Y, f=img.astype(np.complex128), eps=1e-6)
+        results.append(fft_result)
+    
+    if len(results) == 1:
+        final_result = results[0]
+    else:
+        final_result = np.array(results)
+    
+    if return_coords:
+        return final_result, spatial_freqs
+    else:
+        return final_result
 
 
 def calibrateMag_process_one_region(region_image, apix, resolution, resolution_range_percent=10, r_samples=100, theta_samples=360):
@@ -1540,6 +1655,78 @@ def calibrateMag_process_one_region_advanced(region_data, apix, res_low, res_hig
             resolution_range_percent=((res_low - res_high) / ((res_low + res_high) / 2)) * 100,
             r_samples=r_samples,
             theta_samples=theta_samples
+        )
+
+
+def calibrateMag_process_one_region_fast(region_data, apix, res_low, res_high, r_samples, theta_samples):
+    """
+    Fast version using the proven nufft_resolution_range method.
+    
+    Args:
+        region_data: numpy array or PIL Image of the region data
+        apix: Pixel size in Å/pixel
+        res_low: Low resolution limit (Å)
+        res_high: High resolution limit (Å)
+        r_samples: Number of radial samples
+        theta_samples: Number of angular samples
+        
+    Returns:
+        tuple: (pwr_curve, pwr) - 1D power curve and 2D power array
+    """
+    import time
+    start_time = time.time()
+    print(f"🚀 Starting FAST NuFFT calculation...")
+    
+    # Convert PIL Image to numpy array if needed
+    if isinstance(region_data, Image.Image):
+        images = np.array(region_data.convert("L")).astype(np.float32)
+    else:
+        images = region_data.astype(np.float32)
+    
+    # Ensure proper shape for processing (remove batch dimension if present)
+    if len(images.shape) == 3:
+        images = images[0]  # Take first image if batched
+    
+    try:
+        # Use the fast nufft_resolution_range method that we proved is fastest
+        print(f"📊 Using fast nufft_resolution_range method...")
+        calc_time = time.time()
+        
+        fft_data = nufft_resolution_range(
+            images, 
+            apix, 
+            res_low=res_low, 
+            res_high=res_high,
+            r_samples=r_samples, 
+            theta_samples=theta_samples
+        )
+        
+        calc_duration = time.time() - calc_time
+        print(f"⚡ NuFFT calculation completed in {calc_duration:.3f} seconds")
+        
+        # Calculate power spectrum
+        pwr = np.abs(fft_data)
+        
+        # Get 1D profile by taking maximum across angles (axis 0)
+        pwr_curve = np.max(pwr, axis=0)
+        
+        # Normalize the signal similar to original function
+        pwr_curve -= np.median(pwr_curve)
+        pwr_curve = pwr_curve / median_abs_deviation(pwr_curve)
+        
+        total_time = time.time() - start_time
+        print(f"✅ FAST NuFFT processing completed in {total_time:.3f} seconds total")
+        
+        return (pwr_curve, pwr)
+        
+    except Exception as e:
+        error_time = time.time() - start_time
+        print(f"❌ Fast method failed after {error_time:.3f}s: {e}")
+        print(f"🔄 Falling back to original method...")
+        
+        # Fallback to original method
+        return calibrateMag_process_one_region_advanced(
+            region_data, apix, res_low, res_high, r_samples, theta_samples
         )
 
 

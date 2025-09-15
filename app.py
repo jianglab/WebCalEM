@@ -27,6 +27,7 @@ from compute import (
     compute_fft_1d_data,
     # compute_fft_polar_heatmap_data,
     calibrateMag_process_one_region_advanced,
+    calibrateMag_process_one_region_fast,
     resolution_to_radius,
     # create_fft_1d_plotly_figure,
     get_image,
@@ -393,18 +394,18 @@ app_ui = ui.page_fillable(
                             "NuFFT",
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 8px;"},
-                                # Left: Main content area with NuFFT heatmap and power curve
+                                # Left: Main content area with NuFFT power curve and heatmap  
                                 ui.div(
                                     {"style": "height: 100%; display: flex; flex-direction: column;"},
-                                    # Top: NuFFT heatmap (40% height)
+                                    # Top: Power curve plot (60% height) - shows first for quick interaction
                                     ui.div(
-                                        {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0;"},
-                                        output_widget("nufft_heatmap")
-                                    ),
-                                    # Bottom: Power curve plot (60% height)
-                                    ui.div(
-                                        {"style": "flex: 6; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                        {"style": "flex: 6; display: flex; align-items: center; justify-content: center; min-height: 0;"},
                                         output_widget("nufft_power_curve")
+                                    ),
+                                    # Bottom: NuFFT focused heatmap (40% height) - shows after click
+                                    ui.div(
+                                        {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                        output_widget("nufft_heatmap")
                                     )
                                 ),
                                 # Right: Controls spanning entire height
@@ -423,7 +424,7 @@ app_ui = ui.page_fillable(
                                     ),
                                     ui.div(
                                         {"style": "margin-bottom: 5px;"},
-                                        ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=2, step=0.1),
+                                        ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
                                     ),
                                     ui.div(
                                         {"style": "margin-bottom: 5px;"},
@@ -744,6 +745,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     # Add reactive value to store the clicked position on NuFFT power curve for green line
     #nufft_click_position = reactive.Value(None)
+    
+    # Smart heatmap control: track clicked frequency for focused heatmap rendering
+    nufft_clicked_frequency = reactive.Value(None)
+    nufft_show_focused_heatmap = reactive.Value(False)
     
     # Flag to prevent NuFFT recalculation when apix is updated from power curve clicks
     apix_updating_from_nufft_click = reactive.Value(False)
@@ -2784,6 +2789,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             freq_low = 1.0 / res_high   # 1/2.343 = 0.427 1/Å
             freq_high = 1.0 / res_low   # 1/1.917 = 0.522 1/Å
             
+            # Add timing for tab switching
+            import time
+            tab_switch_time = time.time()
+            print(f"🕒 TAB SWITCH TIMING: NuFFT calculation requested at {tab_switch_time:.3f}")
+            
             print(f"🔄 Recalculating NuFFT data (r_freq={r_freq}, theta_freq={theta_freq}, range={display_range}%)...")
             print(f"🎯 NuFFT range: {res_low:.3f} - {res_high:.3f} Å (±{display_range:.1f}% around {target_resolution:.3f} Å)")
             
@@ -2792,12 +2802,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             r_samples_uncapped = int((0.5 * region_size) * r_freq)
             theta_samples_uncapped = int(360 * theta_freq)
             
-            r_samples = min(r_samples_uncapped, 3000)  # Cap at 2000 for better resolution
-            theta_samples = min(theta_samples_uncapped, 1800)  # Cap at 720 for better angular resolution
+            r_samples = min(r_samples_uncapped, 10000)  # Cap at 3000 for better resolution
+            theta_samples = min(theta_samples_uncapped, 1800)  # Cap at 1800 for better angular resolution
             
             # Show if capping occurred
-            r_capped = r_samples_uncapped > 3000
-            theta_capped = theta_samples_uncapped > 3600
+            r_capped = r_samples_uncapped > 10000
+            theta_capped = theta_samples_uncapped > 1800
             print(f"🔧 NuFFT calculation params:")
             print(f"   r_samples: {r_samples}{' (CAPPED from ' + str(r_samples_uncapped) + ')' if r_capped else ''} → affects power curve smoothness")
             print(f"   theta_samples: {theta_samples}{' (CAPPED from ' + str(theta_samples_uncapped) + ')' if theta_capped else ''} → affects heatmap angular resolution")
@@ -2807,8 +2817,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             if theta_capped:
                 print(f"   ⚠️  Angular sampling is capped - reduce theta_freq slider to see changes in heatmap resolution")
             
-            # Process the region using NuFFT
-            pwr_curve, pwr2d_raw = calibrateMag_process_one_region_advanced(
+            # Process the region using FAST NuFFT method
+            core_calc_start = time.time()
+            print(f"🚀 Starting FAST NuFFT core calculation at {core_calc_start:.3f}...")
+            
+            pwr_curve, pwr2d_raw = calibrateMag_process_one_region_fast(
                 region_data=calc_state['region'],
                 apix=current_apix,
                 res_low=res_low,
@@ -2816,6 +2829,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 r_samples=r_samples,
                 theta_samples=theta_samples
             )
+            
+            core_calc_end = time.time()
+            core_calc_duration = core_calc_end - core_calc_start
+            print(f"🏁 FAST NuFFT core calculation completed in {core_calc_duration:.3f} seconds")
             
             # Cache the NuFFT heatmap data
             cached_nufft_heatmap_data.set({
@@ -2846,6 +2863,13 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'display_range': display_range
             })
             
+            # Add complete timing measurement
+            total_process_end = time.time()
+            total_duration = total_process_end - tab_switch_time
+            caching_duration = total_process_end - core_calc_end
+            
+            print(f"💾 Data caching completed in {caching_duration:.3f} seconds")
+            print(f"⏱️  TOTAL TAB SWITCH TO DATA READY: {total_duration:.3f} seconds")
             print("✅ NuFFT data calculated and cached successfully")
             
             # Clear green vertical lines from existing power curve widget since we have new data
@@ -3422,8 +3446,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"Auto-zoom calculation: resolution={target_resolution:.2f} Å, apix={nominal_apix:.3f} Å/px, region_size={region_size}")
             print(f"Calculated target radius: {target_radius:.1f} px")
             
-            # Set zoom range: ±15 pixels around target radius
-            zoom_margin = 15
+            # Set zoom range: ±10 pixels around target radius
+            zoom_margin = 10
             y_min = max(heatmap_data['radii'][0], target_radius - zoom_margin)
             y_max = min(heatmap_data['radii'][-1], target_radius + zoom_margin)
             
@@ -3473,8 +3497,55 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render_widget
+    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq)
     def nufft_heatmap():
         from shiny import req
+        import time
+        plot_start = time.time()
+        print(f"🎨 HEATMAP PLOT START: {plot_start:.3f}")
+        
+        # Check if we should show focused heatmap
+        show_focused = nufft_show_focused_heatmap.get()
+        clicked_freq = nufft_clicked_frequency.get()
+        
+        if not show_focused:
+            # Initial state: Show placeholder message encouraging user to click
+            print("🎯 INITIAL STATE: Showing click-to-generate-heatmap placeholder")
+            
+            fig = go.Figure()
+            fig.add_annotation(
+                text="<b>📊 Interactive Heatmap</b><br><br>" +
+                     "👆 Click on the power curve above<br>" +
+                     "to generate a focused heatmap<br>" +
+                     "around your selected frequency<br><br>" +
+                     "🎯 This saves time by showing<br>" +
+                     "only the relevant data slice!",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, xanchor='center', yanchor='middle',
+                showarrow=False,
+                font=dict(size=14, color="gray"),
+                bgcolor="rgba(240,240,240,0.8)",
+                bordercolor="gray",
+                borderwidth=1
+            )
+            fig.update_layout(
+                title="Click Power Curve to Generate Focused Heatmap",
+                height=300,
+                width=650,
+                margin=dict(l=80, r=20, t=60, b=40),
+                showlegend=False,
+                xaxis=dict(showgrid=False, showticklabels=False, showline=False, zeroline=False),
+                yaxis=dict(showgrid=False, showticklabels=False, showline=False, zeroline=False),
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
+            
+            plot_end = time.time()
+            print(f"🏁 PLACEHOLDER HEATMAP completed in {plot_end - plot_start:.3f} seconds")
+            return go.FigureWidget(fig)
+        
+        # Focused mode: Generate heatmap around clicked frequency
+        print(f"🎯 FOCUSED MODE: Generating heatmap around frequency {clicked_freq:.6f} 1/Å")
+        
         # Require NuFFT calculation state to exist
         calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
@@ -3488,7 +3559,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             print("⏳ Waiting for NuFFT heatmap data...")
             return go.FigureWidget()  # Return empty widget while calculating
         
-        print("📊 Using NuFFT heatmap data")
+        print("📊 Using NuFFT heatmap data for FOCUSED rendering")
         
         pwr = cached_heatmap_data['pwr2d_raw']
         r_samples = cached_heatmap_data['r_samples']
@@ -3507,48 +3578,190 @@ def server(input: Inputs, output: Outputs, session: Session):
         print(f"   res_low: {res_low:.3f}, res_high: {res_high:.3f}")
         
         try:
+            data_prep_start = time.time()
             
-            # Get the transpose of pwr[0] which should have shape (r_samples, theta_samples)
+            # NuFFT output shape is (theta_samples, r_samples) from meshgrid
             if len(pwr.shape) > 2:
-                heatmap_data = pwr[0].T  # Transpose for proper display
+                heatmap_data = pwr[0]  # Shape: (theta_samples, r_samples)
             else:
-                heatmap_data = pwr.T
+                heatmap_data = pwr     # Shape: (theta_samples, r_samples)
+            
+            print(f"🔍 Original NuFFT shape: {heatmap_data.shape} = (theta={theta_samples}, r={r_samples})")
+            
+            # DEBUG: Check if the source NuFFT data has angular variation
+            print(f"🔍 DEBUGGING SOURCE NuFFT DATA:")
+            print(f"  Full heatmap data shape: {heatmap_data.shape}")
+            print(f"  Sample from different theta values:")
+            for theta_idx in [0, theta_samples//4, theta_samples//2, 3*theta_samples//4]:
+                if theta_idx < heatmap_data.shape[0]:
+                    sample = heatmap_data[theta_idx, :5]  # First 5 radial values
+                    print(f"    θ={theta_idx}: {sample} (range: {heatmap_data[theta_idx, :].min():.3f}-{heatmap_data[theta_idx, :].max():.3f})")
+            
+            # Check if source data is 1D radial profile repeated for all angles
+            first_radial_profile = heatmap_data[0, :]
+            source_all_identical = True
+            for theta_idx in range(1, min(10, heatmap_data.shape[0])):
+                if not np.allclose(heatmap_data[theta_idx, :], first_radial_profile, rtol=1e-6):
+                    source_all_identical = False
+                    break
+            print(f"  🚨 Source data - all angular columns identical: {source_all_identical}")
+            
+            if source_all_identical:
+                print(f"  ⚠️ ROOT CAUSE: Source NuFFT data is 1D radial profile replicated!")
+                print(f"  The NuFFT calculation should produce 2D (theta, r) data with variation in both dimensions")
+                print(f"  Current data appears to be a 1D radial profile repeated for all angles")
+            
+            # FOCUSED SLICE: Extract ±2 pixels around clicked frequency  
+            # Create frequency array to find the index corresponding to clicked frequency
+            res_range_array = np.linspace(res_low, res_high, r_samples)
+            spatial_freq_array = 1.0 / res_range_array
+            
+            # Find the index closest to clicked frequency
+            freq_index = np.argmin(np.abs(spatial_freq_array - clicked_freq))
+            
+            print(f"🔍 Frequency matching:")
+            print(f"  clicked_freq: {clicked_freq:.6f}")
+            print(f"  freq_index: {freq_index}")
+            print(f"  r_samples: {r_samples}")
+            print(f"  actual_freq_at_index: {spatial_freq_array[freq_index]:.6f}")
+            
+            # Extract ±10 pixel slice (21 pixels total) - slice the RADIAL dimension (axis=1)
+            slice_width = 10  # ±10 pixels = 21 total pixels
+            start_idx = max(0, freq_index - slice_width)
+            end_idx = min(r_samples, freq_index + slice_width + 1)
+            
+            print(f"🔍 Slice calculation:")
+            print(f"  slice_width: {slice_width}")
+            print(f"  start_idx: {start_idx}")
+            print(f"  end_idx: {end_idx}")
+            print(f"  slice_size: {end_idx - start_idx}")
+            
+            # Extract focused slice: all theta, focused radial range
+            # Shape: (theta_samples, focused_r_samples) = (1800, 31)
+            original_focused_data = heatmap_data[:, start_idx:end_idx]  # All theta, focused radial range
+            original_focused_res_range = res_range_array[start_idx:end_idx]
+            original_focused_freq_range = spatial_freq_array[start_idx:end_idx]
+            
+            # DEBUG: Check if the original data has angular variation
+            print(f"🔍 DEBUGGING ANGULAR VARIATION:")
+            print(f"  Original focused data shape: {original_focused_data.shape}")
+            print(f"  Sample angular profiles (first 5 theta values):")
+            for theta_idx in range(min(5, original_focused_data.shape[0])):
+                profile = original_focused_data[theta_idx, :]
+                print(f"    θ={theta_idx}: {profile[:3]}...{profile[-3:]} (range: {profile.min():.3f}-{profile.max():.3f})")
+            
+            # Check if all angular columns are identical (vertical stripe issue)
+            first_column = original_focused_data[0, :]
+            all_identical = True
+            for theta_idx in range(1, min(10, original_focused_data.shape[0])):
+                if not np.allclose(original_focused_data[theta_idx, :], first_column, rtol=1e-6):
+                    all_identical = False
+                    break
+            print(f"  🚨 All angular columns identical: {all_identical}")
+            
+            if all_identical:
+                print(f"  ⚠️ PROBLEM DETECTED: All angular columns are the same!")
+                print(f"  This suggests the NuFFT data extraction is wrong.")
+                print(f"  Expected: Each θ should have different radial profile")
+                print(f"  Actual: All θ have same radial profile → vertical stripes")
+            
+            # Get current sampling slider values for enhanced resolution
+            r_sampling_freq = input.nufft_r_sampling_freq()
+            theta_sampling_freq = input.nufft_theta_sampling_freq()
+            
+            # Enhanced y-resolution: 21 * r_sampling_freq slider value for display (21 pixels = ±10)
+            enhanced_y_resolution = int(21 * r_sampling_freq)
+            
+            # Enhanced x-resolution: theta_sampling_freq affects angular resolution  
+            enhanced_x_resolution = int(theta_sampling_freq * theta_samples)
+            
+            print(f"🔧 Enhanced y-resolution: 21 × {r_sampling_freq} = {enhanced_y_resolution} display samples")
+            print(f"🔧 Enhanced x-resolution: {theta_sampling_freq} × {theta_samples} = {enhanced_x_resolution} angular samples")
+            
+            # TEMPORARY: Skip interpolation to debug the source data issue
+            # Use original focused data directly to see if the stripe issue is in source data or interpolation
+            print(f"🔧 DEBUGGING: Using original focused data without interpolation")
+            focused_data = original_focused_data
+            focused_res_range = original_focused_res_range
+            focused_freq_range = 1.0 / focused_res_range
+            
+            # Create simple angle array
+            angles = np.linspace(0, 180, theta_samples, endpoint=False)  # Match NuFFT range 0 to π
+            
+            print(f"🔧 Original focused slice shape: {focused_data.shape} = ({focused_data.shape[0]}θ × {focused_data.shape[1]}r) [±15 pixels]")
+            
+            print(f"🎯 FOCUSED SLICE: freq {clicked_freq:.6f} → index {freq_index} → slice [{start_idx}:{end_idx}]")
+            print(f"🔧 Original heatmap shape: {heatmap_data.shape}")
+            print(f"🔧 Focused slice shape: {focused_data.shape}")
+            print(f"🔧 Expected shape: ({end_idx - start_idx}, {heatmap_data.shape[1]})")
+            print(f"📊 Frequency range: {focused_freq_range[0]:.6f} - {focused_freq_range[-1]:.6f} 1/Å")
+            print(f"📊 Resolution range: {focused_res_range[0]:.3f} - {focused_res_range[-1]:.3f} Å")
+            
+            # Transpose focused data for display: (theta, r) → (r, theta) 
+            heatmap_data = focused_data.T  # Transpose to (r_samples, theta_samples)
+            r_samples = heatmap_data.shape[0]  # Number of radial samples in focused slice (21)
+            theta_samples = heatmap_data.shape[1]  # Number of angular samples 
+            print(f"🔧 Transposed for display: {heatmap_data.shape} = ({r_samples}r × {theta_samples}θ)")
+            print(f"🔧 Original slice shape: 31r × {theta_samples}θ for ±15 pixels around clicked frequency")
             
             # Apply log scale if enabled
             z_data = heatmap_data
             if input.nufft_log_y():
                 z_data = np.log1p(np.abs(z_data))
             
-            # Create resolution range and spatial frequency arrays
-            res_range_array = np.linspace(res_low, res_high, r_samples)
-            # Convert to spatial frequency (1/Å)
-            spatial_freq_array = 1.0 / res_range_array
+            # Use the enhanced frequency and angle arrays we already calculated above
+            # (focused_res_range, focused_freq_range, and angles are already computed with enhanced resolution)
             
-            # Create angle array for x-axis labels  
-            angles = np.linspace(0, 360, theta_samples)
+            data_prep_end = time.time()
+            print(f"🔧 Data preparation: {data_prep_end - data_prep_start:.3f}s")
             
-            # Create hover text
+            # SMART hover text creation - only for top 5% intensity pixels
+            hover_start = time.time()
+            total_pixels = z_data.shape[0] * z_data.shape[1]
+            
+            # Calculate 95th percentile threshold for intensity
+            intensity_threshold = np.percentile(z_data.flatten(), 95)
+            high_intensity_mask = z_data >= intensity_threshold
+            high_intensity_count = np.sum(high_intensity_mask)
+            
+            print(f"🧠 SMART HOVER: Creating detailed hover for {high_intensity_count:,} high-intensity pixels (top 5% of {total_pixels:,})")
+            print(f"📊 Intensity threshold: {intensity_threshold:.3f}")
+            
+            # SMART FOCUSED HOVER - Much fewer pixels now, so we can afford detailed hover
+            hover_text_creation_start = time.time()
+            total_pixels = z_data.shape[0] * z_data.shape[1]
+            
+            print(f"✨ FOCUSED HOVER: Creating detailed hover for ALL {total_pixels:,} pixels in focused view")
+            
+            # Create detailed hover text for all pixels in focused view (it's small now!)
             hover_text = []
-            for i in range(z_data.shape[0]):  # r_samples
+            for i in range(z_data.shape[0]):  # r_samples (now just 3 or so)
                 row_text = []
-                for j in range(z_data.shape[1]):  # theta_samples
-                    if i < len(res_range_array) and j < len(angles):
-                        hover_info = f"Resolution: {res_range_array[i]:.3f} Å<br>Spatial freq: {spatial_freq_array[i]:.4f} Å⁻¹<br>Angle: {angles[j]:.1f}°<br>Intensity: {z_data[i,j]:.3f}"
+                for j in range(z_data.shape[1]):  # theta_samples 
+                    if i < len(focused_res_range) and j < len(angles):
+                        hover_info = f"🎯 FOCUSED VIEW 🎯<br>Resolution: {focused_res_range[i]:.3f} Å<br>Spatial freq: {focused_freq_range[i]:.6f} Å⁻¹<br>Angle: {angles[j]:.1f}°<br>Intensity: {z_data[i,j]:.3f}"
                     else:
-                        hover_info = f"R-idx: {i}<br>θ-idx: {j}<br>Intensity: {z_data[i,j]:.3f}"
+                        hover_info = f"🎯 FOCUSED VIEW 🎯<br>R-idx: {i}<br>θ-idx: {j}<br>Intensity: {z_data[i,j]:.3f}"
                     row_text.append(hover_info)
                 hover_text.append(row_text)
             
-            # Create tick values and labels for spatial frequency y-axis
-            n_ticks = min(6, len(spatial_freq_array))  # Maximum 6 ticks
+            hover_text_creation_end = time.time()
+            print(f"✨ FOCUSED HOVER COMPLETED: {hover_text_creation_end - hover_text_creation_start:.3f}s for {total_pixels:,} pixels")
+            
+            hover_end = time.time()
+            hover_duration = hover_end - hover_start
+            print(f"🎯 SMART HOVER COMPLETED: {hover_duration:.3f}s for {high_intensity_count:,} pixels")
+            
+            # Create tick values and labels for focused spatial frequency y-axis
+            n_ticks = min(6, len(focused_freq_range))  # Maximum 6 ticks
             if n_ticks > 0:
-                tick_indices = np.linspace(0, len(spatial_freq_array)-1, n_ticks, dtype=int)
+                tick_indices = np.linspace(0, len(focused_freq_range)-1, n_ticks, dtype=int)
                 y_tickvals = tick_indices
                 y_ticktext = []
                 for idx in tick_indices:
-                    if idx < len(res_range_array):
-                        res_val = res_range_array[idx]
-                        y_ticktext.append(f"1/{res_val:.2f}")
+                    if idx < len(focused_res_range):
+                        res_val = focused_res_range[idx]
+                        y_ticktext.append(f"1/{res_val:.3f}")  # More precision for focused view
                     else:
                         y_ticktext.append("")
             else:
@@ -3556,23 +3769,65 @@ def server(input: Inputs, output: Outputs, session: Session):
                 y_ticktext = []
             
             # Create Plotly heatmap
-            fig = go.Figure(data=go.Heatmap(
+            plotly_start = time.time()
+            heatmap_obj_start = time.time()
+            print(f"📊 Creating Plotly heatmap figure...")
+            print(f"🔍 Final z_data shape for heatmap: {z_data.shape}")
+            print(f"🔍 Data type: {z_data.dtype}")
+            print(f"🔍 Data size in MB: {z_data.nbytes / 1024 / 1024:.4f}")
+            print(f"🔍 Shape breakdown: {z_data.shape[0]} radial × {z_data.shape[1]} angular samples")
+            print(f"🔍 Data range: min={np.min(z_data):.3f}, max={np.max(z_data):.3f}, mean={np.mean(z_data):.3f}")
+            print(f"🔍 Has NaN/Inf: nan={np.any(np.isnan(z_data))}, inf={np.any(np.isinf(z_data))}")
+            print(f"🔍 Sample values: {z_data.flat[:5]}")  # First 5 values
+            
+            heatmap_trace = go.Heatmap(
                 z=z_data,
                 x=np.arange(z_data.shape[1]),  # Angular samples
-                y=np.arange(z_data.shape[0]),  # Spatial frequency samples
+                y=np.arange(z_data.shape[0]),  # Focused spatial frequency samples (small!)
                 colorscale='viridis',
+                showscale=False,  # Remove colorbar
                 hoverongaps=False,
+                # Rich hover text for focused view - we can afford it now with few pixels
                 hovertemplate='%{text}<extra></extra>',
-                text=hover_text
-            ))
+                text=hover_text  # Detailed hover for all pixels in focused view
+            )
+            
+            heatmap_obj_end = time.time()
+            print(f"🎨 Heatmap object creation: {heatmap_obj_end - heatmap_obj_start:.3f}s")
+            
+            figure_start = time.time()
+            fig = go.Figure(data=heatmap_trace)
+            figure_end = time.time()
+            print(f"📋 Figure object creation: {figure_end - figure_start:.3f}s")
+            
+            plotly_mid = time.time()
+            print(f"📈 Total heatmap + figure creation: {plotly_mid - plotly_start:.3f}s")
+            
+            # FIX: Calculate dimensions for BETTER VISUALIZATION
+            # For focused view: 31 × theta_samples (e.g., 31 × 1800) 
+            # INCREASE height significantly for better visualization - pixels don't need to be square
+            min_visible_height = 350  # Increased for 31 radial samples
+            
+            # Scale height for better visualization of frequency patterns across more samples
+            base_pixel_height = max(min_visible_height // z_data.shape[0], 10)  # At least 10px per radial sample for 31 samples
+            max_reasonable_height = 600  # Increased to accommodate 31 samples
+            display_height = min(max(z_data.shape[0] * base_pixel_height, min_visible_height), max_reasonable_height)
+            
+            # Use full available width in container
+            display_width = 650  # Full width available in container
+            
+            print(f"🔧 Enhanced visibility heatmap: {z_data.shape[0]}r × {z_data.shape[1]}θ samples [±15 pixels]")
+            print(f"🔧 Display dimensions: {display_width:.0f}w × {display_height}h (increased for better visualization)")
+            print(f"🔧 Per-sample size: ~{display_width/z_data.shape[1]:.1f}w × {base_pixel_height}h pixels")
+            print(f"🔧 Height range: {min_visible_height}px - {max_reasonable_height}px (no longer square pixels)")
             
             fig.update_layout(
-                title=f'NuFFT Analysis: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
+                title=f'🎯 FOCUSED NuFFT: ±15px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
                 xaxis_title='Angular Samples',
-                yaxis_title='Spatial Resolution (1/Å)', 
-                height=300,
-                width=650,  # Fixed width to prevent horizontal scrollbars
-                margin=dict(l=80, r=20, t=60, b=40),
+                yaxis_title='Radial Samples (Frequency)', 
+                height=display_height,
+                width=display_width,
+                margin=dict(l=80, r=20, t=50, b=40),
                 autosize=False,
                 yaxis=dict(
                     tickvals=y_tickvals,
@@ -3581,10 +3836,107 @@ def server(input: Inputs, output: Outputs, session: Session):
                 )
             )
             
-            return go.FigureWidget(fig)
+            plotly_layout_end = time.time()
+            print(f"🎨 Layout update completed in {plotly_layout_end - plotly_mid:.3f}s")
+            
+            widget_start = time.time()
+            
+            # FIX: Ensure the heatmap trace is correctly configured for visibility
+            print(f"🔧 Final heatmap trace validation before FigureWidget creation...")
+            print(f"🔍 Trace z data: {np.array(heatmap_trace.z).shape}, type: {type(heatmap_trace.z)}")
+            print(f"🔍 Z data sample: {np.array(heatmap_trace.z).flat[:5]}")
+            print(f"🔍 Colorscale: {heatmap_trace.colorscale}")
+            print(f"🔍 X array length: {len(heatmap_trace.x) if hasattr(heatmap_trace.x, '__len__') else 'scalar'}")
+            print(f"🔍 Y array length: {len(heatmap_trace.y) if hasattr(heatmap_trace.y, '__len__') else 'scalar'}")
+            
+            # FIX: Explicitly set the visible property and ensure proper data format
+            heatmap_trace.visible = True
+            
+            # FIX: Recreate figure with explicit data validation
+            if np.any(np.isnan(z_data)) or np.any(np.isinf(z_data)):
+                print("⚠️ WARNING: NaN/Inf values detected, cleaning data...")
+                z_data = np.nan_to_num(z_data, nan=0.0, posinf=np.max(z_data[np.isfinite(z_data)]), 
+                                     neginf=np.min(z_data[np.isfinite(z_data)]))
+                heatmap_trace.z = z_data
+            
+            # FIX: Try creating the FigureWidget directly with data
+            try:
+                # Method 1: Direct FigureWidget creation
+                widget = go.FigureWidget(data=[heatmap_trace])
+                print(f"✅ FigureWidget created using Method 1 (direct data)")
+            except Exception as e1:
+                print(f"❌ Method 1 failed: {e1}")
+                try:
+                    # Method 2: Create Figure first, then convert
+                    widget = go.FigureWidget(fig)
+                    print(f"✅ FigureWidget created using Method 2 (via Figure)")
+                except Exception as e2:
+                    print(f"❌ Method 2 failed: {e2}")
+                    # Method 3: Minimal fallback
+                    widget = go.FigureWidget()
+                    widget.add_heatmap(z=z_data, colorscale='viridis')
+                    print(f"✅ FigureWidget created using Method 3 (add_heatmap)")
+            
+            widget_end = time.time()
+            print(f"🔧 FigureWidget creation: {widget_end - widget_start:.3f}s")
+            
+            # FIX: Force update the layout on the widget directly with proper sizing
+            layout_height = display_height  # Use calculated display height
+            print(f"🔧 Final layout height: {layout_height}px (required minimum: {min_visible_height}px)")
+            
+            widget.update_layout(
+                title=dict(
+                    text=f'🎯 FOCUSED NuFFT: ±10px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
+                    font=dict(size=12)
+                ),
+                xaxis=dict(
+                    title='Angular Samples',
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGray'
+                ),
+                yaxis=dict(
+                    title='Radial Samples (Frequency)',
+                    tickvals=y_tickvals,
+                    ticktext=y_ticktext,
+                    tickmode='array',
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGray'
+                ),
+                height=layout_height,
+                width=display_width,
+                margin=dict(l=100, r=80, t=60, b=60),  # Increased margins for better visibility
+                autosize=False,
+                showlegend=False,
+                plot_bgcolor='white',
+                paper_bgcolor='white'
+            )
+            
+            # Debug the final widget contents
+            print(f"🔍 Final widget validation:")
+            print(f"  - Data traces: {len(widget.data)}")
+            print(f"  - Layout width: {widget.layout.width}")
+            print(f"  - Layout height: {widget.layout.height}")
+            print(f"  - Layout title: {widget.layout.title.text if hasattr(widget.layout.title, 'text') else widget.layout.title}")
+            if len(widget.data) > 0:
+                trace = widget.data[0]
+                print(f"  - First trace type: {type(trace).__name__}")
+                print(f"  - First trace visible: {getattr(trace, 'visible', 'undefined')}")
+                print(f"  - First trace z shape: {np.array(trace.z).shape if hasattr(trace, 'z') and trace.z is not None else 'None'}")
+            
+            plot_end = time.time()
+            plot_duration = plot_end - plot_start
+            plotly_total = plotly_layout_end - plotly_start
+            print(f"📊 Total Plotly operations: {plotly_total:.3f}s")
+            print(f"🏁 HEATMAP PLOT COMPLETED in {plot_duration:.3f} seconds")
+            
+            return widget
             
         except Exception as e:
-            print(f"Error creating NuFFT heatmap: {e}")
+            plot_end = time.time()
+            plot_duration = plot_end - plot_start
+            print(f"❌ HEATMAP PLOT FAILED after {plot_duration:.3f} seconds: {e}")
             import traceback
             traceback.print_exc()
             return go.FigureWidget()
@@ -3593,6 +3945,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render_widget
     def nufft_power_curve():
         from shiny import req
+        import time
+        power_plot_start = time.time()
+        print(f"📈 POWER CURVE PLOT START: {power_plot_start:.3f}")
+        
         # Require NuFFT calculation state to exist
         calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
@@ -3704,8 +4060,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 title=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
                 xaxis_title='Spatial Resolution (1/Å)',
                 yaxis_title=y_title,
-                #height=200,
-                #width=650,  # Fixed width to match heatmap
+                height=300,
+                width=650,  # Fixed width to match heatmap
                 margin=dict(l=60, r=20, t=40, b=60),
                 autosize=False,
                 showlegend=False,
@@ -3741,10 +4097,17 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Store widget for click event access
             nufft_power_widget.set(fw)
             
+            power_plot_end = time.time()
+            power_plot_duration = power_plot_end - power_plot_start
+            print(f"🏁 POWER CURVE PLOT COMPLETED in {power_plot_duration:.3f} seconds")
+            print(f"🎯 TOTAL END-TO-END TAB SWITCH TO PLOTS VISIBLE: Check previous timing logs")
+            
             return fw
             
         except Exception as e:
-            print(f"Error creating NuFFT power curve: {e}")
+            power_plot_end = time.time()
+            power_plot_duration = power_plot_end - power_plot_start
+            print(f"❌ POWER CURVE PLOT FAILED after {power_plot_duration:.3f} seconds: {e}")
             import traceback
             traceback.print_exc()
             return go.FigureWidget()
@@ -3785,7 +4148,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         def on_click(trace, points, selector):
             """Handle click events on NuFFT power curve."""
-            #print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
+            import time
+            click_start = time.time()
+            print(f"🖱️  CLICK EVENT START: {click_start:.3f}")
+            print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
             if points.point_inds:
                 try:
                     # Get clicked point information
@@ -3870,10 +4236,22 @@ def server(input: Inputs, output: Outputs, session: Session):
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
                         ui.update_slider("apix_slider", value=tentative_apix)
                         
+                        # Enable focused heatmap around clicked frequency
+                        if x_val is not None:
+                            nufft_clicked_frequency.set(x_val)
+                            nufft_show_focused_heatmap.set(True)
+                            print(f"🎯 FOCUSED HEATMAP enabled around frequency {x_val:.6f} 1/Å")
+                        
+                        click_end = time.time()
+                        click_duration = click_end - click_start
+                        print(f"🎯 CLICK EVENT COMPLETED in {click_duration:.3f} seconds")
+                        
                     # If tentative_apix is None, do nothing
                         
                 except Exception as e:
-                    print(f"Error processing NuFFT power curve click: {e}")
+                    click_end = time.time()
+                    click_duration = click_end - click_start
+                    print(f"❌ CLICK EVENT FAILED after {click_duration:.3f} seconds: {e}")
                     import traceback
                     traceback.print_exc()
         
