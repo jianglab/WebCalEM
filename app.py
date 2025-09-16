@@ -391,7 +391,7 @@ app_ui = ui.page_fillable(
                             )
                         ),
                         ui.nav_panel(
-                            "NuFFT",
+                            "1D Radial Profile",
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 8px;"},
                                 # Left: Main content area with NuFFT power curve and heatmap  
@@ -412,16 +412,16 @@ app_ui = ui.page_fillable(
                                 ui.div(
                                     {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 5px;"},
                                     ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
-                                    ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
-                                    ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
-                                    ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
-                                    ui.div(
-                                        {"style": "margin-bottom: 5px;"},
-                                        ui.panel_conditional(
-                                            "input.nufft_smooth",
-                                            ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
-                                        ),
-                                    ),
+                                    # ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
+                                    # ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
+                                    # ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
+                                    # ui.div(
+                                    #     {"style": "margin-bottom: 5px;"},
+                                    #     ui.panel_conditional(
+                                    #         "input.nufft_smooth",
+                                    #         ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
+                                    #     ),
+                                    # ),
                                     ui.div(
                                         {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
@@ -742,6 +742,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     # Add reactive value to store the NuFFT power curve FigureWidget for click handling
     nufft_power_widget = reactive.Value(None)
+
+    # Add reactive value to store the NuFFT heatmap FigureWidget for click handling
+    nufft_heatmap_widget = reactive.Value(None)
     
     # Add reactive value to store the clicked position on NuFFT power curve for green line
     #nufft_click_position = reactive.Value(None)
@@ -3541,6 +3544,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             plot_end = time.time()
             print(f"🏁 PLACEHOLDER HEATMAP completed in {plot_end - plot_start:.3f} seconds")
+
+            # Clear widget for placeholder state
+            nufft_heatmap_widget.set(None)
+
             return go.FigureWidget(fig)
         
         # Focused mode: Generate heatmap around clicked frequency
@@ -3557,6 +3564,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         cached_heatmap_data = cached_nufft_heatmap_data.get()
         if cached_heatmap_data is None:
             print("⏳ Waiting for NuFFT heatmap data...")
+            nufft_heatmap_widget.set(None)
             return go.FigureWidget()  # Return empty widget while calculating
         
         print("📊 Using NuFFT heatmap data for FOCUSED rendering")
@@ -3734,12 +3742,19 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"✨ FOCUSED HOVER: Creating detailed hover for ALL {total_pixels:,} pixels in focused view")
             
             # Create detailed hover text for all pixels in focused view (it's small now!)
+            # Calculate tentative apix for each frequency point (same formula as power curve)
+            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
+            target_spatial_freq = 1.0 / target_resolution
+            tentative_apix_array = nominal_apix * (focused_freq_range / target_spatial_freq)
+
             hover_text = []
             for i in range(z_data.shape[0]):  # r_samples (now just 3 or so)
                 row_text = []
-                for j in range(z_data.shape[1]):  # theta_samples 
+                for j in range(z_data.shape[1]):  # theta_samples
                     if i < len(focused_res_range) and j < len(angles):
-                        hover_info = f"🎯 FOCUSED VIEW 🎯<br>Resolution: {focused_res_range[i]:.3f} Å<br>Spatial freq: {focused_freq_range[i]:.6f} Å⁻¹<br>Angle: {angles[j]:.1f}°<br>Intensity: {z_data[i,j]:.3f}"
+                        # Use the same template as nufft_power_curve
+                        tentative_apix = tentative_apix_array[i]
+                        hover_info = f"🎯 FOCUSED VIEW 🎯 <br><b>Spatial freq: {focused_freq_range[i]:.4f} Å⁻¹<br><b>Tentative Apix:</b> {tentative_apix:.4f} Å/px<br><b>For resolution:</b> {target_resolution:.3f} Å<br>"
                     else:
                         hover_info = f"🎯 FOCUSED VIEW 🎯<br>R-idx: {i}<br>θ-idx: {j}<br>Intensity: {z_data[i,j]:.3f}"
                     row_text.append(hover_info)
@@ -3930,7 +3945,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             plotly_total = plotly_layout_end - plotly_start
             print(f"📊 Total Plotly operations: {plotly_total:.3f}s")
             print(f"🏁 HEATMAP PLOT COMPLETED in {plot_duration:.3f} seconds")
-            
+
+            # Store widget for click handling
+            nufft_heatmap_widget.set(widget)
+
             return widget
             
         except Exception as e:
@@ -3939,6 +3957,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"❌ HEATMAP PLOT FAILED after {plot_duration:.3f} seconds: {e}")
             import traceback
             traceback.print_exc()
+            nufft_heatmap_widget.set(None)
             return go.FigureWidget()
     
     @output
@@ -3991,25 +4010,25 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Apply log scale if enabled
             y_data = pwr_curve
             
-            # Apply smoothing if enabled
-            if input.nufft_smooth() and len(y_data) > input.nufft_window_size():
-                window_size = input.nufft_window_size()
-                kernel = np.ones(window_size) / window_size
-                pad_amount = (len(kernel) - 1) // 2
-                padded_y_data = np.pad(y_data, pad_width=pad_amount, mode='reflect')
-                y_data = np.convolve(padded_y_data, kernel, mode='valid')
-                y_data = y_data - y_data.min()
-                # Adjust spatial frequency array if length changed due to smoothing
-                if len(y_data) != len(spatial_freq_array):
-                    spatial_freq_array = spatial_freq_array[:len(y_data)]
-                    res_range_array = res_range_array[:len(y_data)]
+            # # Apply smoothing if enabled
+            # if input.nufft_smooth() and len(y_data) > input.nufft_window_size():
+            #     window_size = input.nufft_window_size()
+            #     kernel = np.ones(window_size) / window_size
+            #     pad_amount = (len(kernel) - 1) // 2
+            #     padded_y_data = np.pad(y_data, pad_width=pad_amount, mode='reflect')
+            #     y_data = np.convolve(padded_y_data, kernel, mode='valid')
+            #     y_data = y_data - y_data.min()
+            #     # Adjust spatial frequency array if length changed due to smoothing
+            #     if len(y_data) != len(spatial_freq_array):
+            #         spatial_freq_array = spatial_freq_array[:len(y_data)]
+            #         res_range_array = res_range_array[:len(y_data)]
             
-            # Apply detrending if enabled
-            if input.nufft_detrend() and len(y_data) > 2:
-                m, b = np.polyfit(spatial_freq_array, y_data, 1)
-                baseline = m * spatial_freq_array + b
-                y_data = y_data - baseline
-                y_data = y_data - y_data.min()
+            # # Apply detrending if enabled
+            # if input.nufft_detrend() and len(y_data) > 2:
+            #     m, b = np.polyfit(spatial_freq_array, y_data, 1)
+            #     baseline = m * spatial_freq_array + b
+            #     y_data = y_data - baseline
+            #     y_data = y_data - y_data.min()
             
             if input.nufft_log_y():
                 y_data = np.log1p(np.abs(y_data))
@@ -4277,6 +4296,111 @@ def server(input: Inputs, output: Outputs, session: Session):
         for i, trace in enumerate(widget.data):
             if i != 0:  # Skip the first trace (power curve) as it has its own handler
                 trace.on_click(on_general_click)
+
+    @reactive.Effect
+    def setup_nufft_heatmap_click_handler():
+        """Set up click event handler for NuFFT heatmap."""
+        widget = nufft_heatmap_widget.get()
+        if widget is None:
+            return
+
+        # Get the current data to enable click info extraction
+        calc_state = nufft_calculation_state.get()
+        if calc_state['region'] is None:
+            return
+
+        show_focused = nufft_show_focused_heatmap.get()
+        if not show_focused:
+            return
+
+        def on_heatmap_click(trace, points, selector):
+            """Handle click events on NuFFT heatmap."""
+            import time
+            click_start = time.time()
+            print(f"🖱️  HEATMAP CLICK EVENT START: {click_start:.3f}")
+            print(f"DEBUG: NuFFT heatmap click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
+
+            if points.point_inds:
+                try:
+                    # Get clicked point information (y-coordinate represents frequency)
+                    point_idx = points.point_inds[0]
+                    y_val = points.ys[0] if points.ys else None
+
+                    if y_val is not None:
+                        # Get cached heatmap data to access frequency range
+                        cached_heatmap_data = cached_nufft_heatmap_data.get()
+                        if cached_heatmap_data is None:
+                            print("No cached heatmap data available for click handling")
+                            return
+
+                        # Reconstruct frequency range from cached data
+                        clicked_freq = nufft_clicked_frequency.get()
+                        res_low = cached_heatmap_data['res_low']
+                        res_high = cached_heatmap_data['res_high']
+                        r_samples = cached_heatmap_data['r_samples']
+
+                        # Find the focused frequency range around clicked frequency
+                        res_range_array = np.linspace(res_low, res_high, r_samples)
+                        spatial_freq_array = 1.0 / res_range_array
+                        freq_index = np.argmin(np.abs(spatial_freq_array - clicked_freq))
+
+                        # Calculate slice bounds (±15 pixels)
+                        slice_width = 15
+                        start_idx = max(0, freq_index - slice_width)
+                        end_idx = min(r_samples, freq_index + slice_width + 1)
+
+                        # Get the focused frequency range
+                        focused_res_range = res_range_array[start_idx:end_idx]
+                        focused_freq_range = 1.0 / focused_res_range
+
+                        # Convert y-coordinate to spatial frequency
+                        y_idx = int(round(y_val))
+                        if 0 <= y_idx < len(focused_freq_range):
+                            clicked_spatial_freq = focused_freq_range[y_idx]
+
+                            # Calculate tentative apix using same formula as power curve
+                            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else cached_heatmap_data['apix']
+                            target_resolution = cached_heatmap_data['target_resolution']
+                            target_spatial_freq = 1.0 / target_resolution
+                            tentative_apix = nominal_apix * (clicked_spatial_freq / target_spatial_freq)
+
+                            print(f"DEBUG: Heatmap click - y_val={y_val}, y_idx={y_idx}")
+                            print(f"DEBUG: Spatial freq at click: {clicked_spatial_freq:.6f} 1/Å")
+                            print(f"DEBUG: Tentative apix: {tentative_apix:.4f} Å/px")
+
+                            # Update apix slider and text
+                            if 0.01 <= tentative_apix <= 6.0:
+                                # Set flag to prevent NuFFT recalculation during UI update
+                                apix_updating_from_nufft_click.set(True)
+
+                                ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
+                                ui.update_slider("apix_slider", value=tentative_apix)
+
+                                # Clear flag after a short delay
+                                import threading
+                                def clear_flag():
+                                    time.sleep(0.1)
+                                    apix_updating_from_nufft_click.set(False)
+                                threading.Thread(target=clear_flag, daemon=True).start()
+
+                                print(f"DEBUG: Updated apix to {tentative_apix:.4f} Å/px based on heatmap click")
+                            else:
+                                print(f"DEBUG: Tentative apix {tentative_apix:.4f} out of valid range [0.01, 6.0]")
+                        else:
+                            print(f"DEBUG: y_idx {y_idx} out of range [0, {len(focused_freq_range)})")
+
+                    click_end = time.time()
+                    click_duration = click_end - click_start
+                    print(f"🏁 HEATMAP CLICK EVENT completed in {click_duration:.3f} seconds")
+
+                except Exception as e:
+                    print(f"Error handling heatmap click: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+        # Add click handler to the heatmap trace (first trace)
+        if len(widget.data) > 0:
+            widget.data[0].on_click(on_heatmap_click)
 
     # @output
     # @render.text
