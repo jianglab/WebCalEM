@@ -357,10 +357,11 @@ app_ui = ui.page_fillable(
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
                                 # Left side: FFT display
-                                ui.div(
-                                    {"style": "width: 100%; height: 100%;"},
-                                    output_widget("fft_with_circle")
-                                ),
+                                output_widget("fft_with_circle"),
+                                # ui.div(
+                                #     {"style": "width: 100%; height: 100%;"},
+                                #     output_widget("fft_with_circle")
+                                # ),
                                 # Right side: Controls arranged with fixed positioning
                                 ui.div(
                                     {"style": "position: relative; background-color: #f8f9fa; border-radius: 8px; height: 450px; width: 250px; flex-shrink: 1; overflow: hidden;"},
