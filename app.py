@@ -4716,11 +4716,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             fw = FigureWidget()
             apix_centered_widget.set(fw)
             return fw
-        # Ensure Apix is float
+        # Ensure Pixel Size is float
         try:
-            df['Apix'] = pd.to_numeric(df['Apix'], errors='coerce')
+            df['Pixel Size'] = pd.to_numeric(df['Pixel Size'], errors='coerce')
         except Exception:
-            df['Apix'] = None
+            df['Pixel Size'] = None
         # Ensure Nominal is float, fill missing values by extracting from filename
         try:
             df['Nominal'] = pd.to_numeric(df['Nominal'], errors='coerce')
@@ -4733,7 +4733,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             df.loc[missing_nominal, 'Nominal'] = textbox_nominal
         
         # Drop rows with missing data
-        df = df.dropna(subset=['Apix', 'Nominal'])
+        df = df.dropna(subset=['Pixel Size', 'Nominal'])
         if df.empty:
             fw = FigureWidget()
             apix_centered_widget.set(fw)
@@ -4772,7 +4772,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             group = df[df['Nominal'] == nominal]
             if len(group) == 0:
                 continue
-            group_mean = group['Apix'].mean()
+            group_mean = group['Pixel Size'].mean()
             blue_dots.append({'Nominal': nominal, 'y': group_mean - nominal})
         fig.add_trace(go.Scatter(
             x=[d['Nominal'] for d in blue_dots],
@@ -4821,9 +4821,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                     widget.layout.yaxis.title = 'Apix - Nominal (Å/px)'
                 return
             try:
-                df['Apix'] = pd.to_numeric(df['Apix'], errors='coerce')
+                df['Pixel Size'] = pd.to_numeric(df['Pixel Size'], errors='coerce')
             except Exception:
-                df['Apix'] = None
+                df['Pixel Size'] = None
             # Ensure Nominal is float, fill missing values by extracting from filename
             try:
                 df['Nominal'] = pd.to_numeric(df['Nominal'], errors='coerce')
@@ -4835,7 +4835,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 textbox_nominal = float(input.nominal_apix())
                 df.loc[missing_nominal, 'Nominal'] = textbox_nominal
             
-            df = df.dropna(subset=['Apix', 'Nominal'])
+            df = df.dropna(subset=['Pixel Size', 'Nominal'])
             if df.empty:
                 with widget.batch_update():
                     # Clear all existing traces
@@ -4874,7 +4874,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 group = df[df['Nominal'] == nominal]
                 if len(group) == 0:
                     continue
-                group_mean = group['Apix'].mean()
+                group_mean = group['Pixel Size'].mean()
                 blue_dots.append({'Nominal': nominal, 'y': group_mean - nominal})
             traces.append(go.Scatter(
                 x=[d['Nominal'] for d in blue_dots],
