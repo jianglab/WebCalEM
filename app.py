@@ -270,7 +270,7 @@ app_ui = ui.page_fillable(
                 # Accordion panel with controls
                 ui.accordion(
                     ui.accordion_panel(
-                        "Upload",
+                        "Input Image",
                         # Input method selection with conditional panels
                         ui.div(
                             {"style": "display: flex; gap: 10px; margin-bottom: 5px; width: 100%;"},
@@ -279,7 +279,7 @@ app_ui = ui.page_fillable(
                                 {"style": "flex: 4; display: flex; flex-direction: column; gap: 5px;"},
                                 ui.input_radio_buttons(
                                     "input_method",
-                                    "Input Method:",
+                                    "Method:",
                                     choices=["URL", "Upload (.mrc,.tiff,.png)"],
                                     selected="URL",
                                     inline=True
@@ -319,7 +319,7 @@ app_ui = ui.page_fillable(
                             ),
                             ui.div(
                                 {"style": "display: flex; align-items: flex-start; gap: 10px;"},
-                                ui.input_select("resolution_type", "Resolution Type", 
+                                ui.input_select("resolution_type", "Test Specimen:", 
                                     choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
                                     selected="Graphene (2.13 Å)",
                                     width="180px"),
@@ -353,7 +353,11 @@ app_ui = ui.page_fillable(
                     ui.card_header("FFT Analysis"),
                     ui.navset_tab(
                         ui.nav_panel(
-                            "2D Spectrum",
+                            ui.tooltip(
+                                "2D Spectrum",
+                                "Click on the spots associated with the known resolution (e.g., 2.13 for GO) to place markers. Use 'Autocorrect' to refine positions",
+                                placement="top"
+                            ),
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
                                 # Left side: FFT display
@@ -392,7 +396,11 @@ app_ui = ui.page_fillable(
                             )
                         ),
                         ui.nav_panel(
-                            "1D Radial Profile",
+                            ui.tooltip(
+                                "1D Radial Profile",
+                                "Radially averaged power spectrum analysis with NuFFT interpolation for enhanced resolution detection",
+                                placement="top"
+                            ),
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 8px;"},
                                 # Left: Main content area with NuFFT power curve and heatmap  
@@ -400,8 +408,19 @@ app_ui = ui.page_fillable(
                                     {"style": "height: 100%; display: flex; flex-direction: column;"},
                                     # Top: Power curve plot (60% height) - shows first for quick interaction
                                     ui.div(
-                                        {"style": "flex: 6; display: flex; align-items: center; justify-content: center; min-height: 0;"},
-                                        output_widget("nufft_power_curve")
+                                        {"style": "flex: 6; display: flex; flex-direction: column; min-height: 0;"},
+                                        ui.div(
+                                            {"style": "padding: 5px 10px; font-size: 14px; font-weight: 500; border-bottom: 1px solid #dee2e6; background-color: #f8f9fa;"},
+                                            ui.tooltip(
+                                                "1D Power Curve",
+                                                "Click on peaks to calculate tentative pixel size. For multiple peaks, select the leftmost one.",
+                                                placement="top"
+                                            )
+                                        ),
+                                        ui.div(
+                                            {"style": "flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                                            output_widget("nufft_power_curve")
+                                        )
                                     ),
                                     # Bottom: NuFFT focused heatmap (40% height) - shows after click
                                     ui.div(
@@ -506,7 +525,7 @@ app_ui = ui.page_fillable(
                         #ui.div(
                             #{"style": "display: flex; align-items: flex-end; gap: 5px; flex: 3;"},
                             #ui.tags.label("Exact Value:", {"for": "apix_exact_str", "style": "margin: 0; white-space: nowrap;"}),
-                        ui.input_text("apix_exact_str", None, value="1.0", width="160px"),
+                        ui.input_text("apix_exact_str", None, value="1.0", width="200px"),
 
                         ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
                         #),
@@ -524,7 +543,13 @@ app_ui = ui.page_fillable(
     ui.div(
         {"style": "margin-top: 10px;"},
         ui.card(
-            ui.card_header("Region Analysis Table"),
+            ui.card_header(
+                ui.tooltip(
+                    "Statistics",
+                    "Table tracks all calibrated pixel size results across multiple regions and magnifications. Click Download CSV to save the result table",
+                    placement="top"
+                )
+            ),
             # Use row layout: table+buttons on left (55%), plot on right (45%), both full height
             ui.layout_columns(
                 # Left column: Table and controls (55% width, 100% height)
@@ -570,10 +595,6 @@ app_ui = ui.page_fillable(
                     ),
                 ),
                 col_widths=[7, 5],  # 58.3%/41.7% split (closest to 55%/45% with integer grid)
-            ),
-            ui.div(
-                {"class": "card-footer"},
-                "Table tracks all analyzed regions with their calibrated pixel sizes. Use Random Generate (count, size%) to analyze random regions from the current image, or manually select/delete rows.",
             ),
             full_screen=True,
         ),
@@ -855,9 +876,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         'Filename': [],
         'Region Size': [],
         'Region Location': [],
-        'Apix': [],
+        'Pixel Size': [],
         'Nominal': [],
-        'Apix Stats': []
+        'Average Pixel Size': []
     }))
     
     # Add reactive value to store the region and parameters used for current FFT calculation
@@ -875,6 +896,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         'resolution_type': None,
         'custom_resolution': None
     })
+
+    # Track FFT widget creation to prevent duplicates
+    fft_widget_last_created = reactive.Value(None)
     
     # Update 1D plot when cached FFT image changes (removed base_fft_trigger to prevent double render)
     @reactive.Effect
@@ -1438,7 +1462,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             half_size = search_size // 2
             click_xi, click_yi = int(round(click_x)), int(round(click_y))
             
-            print(f"DEBUG: Searching for local maximum around clicked location ({click_x:.1f}, {click_y:.1f})")
             
             # Define search bounds
             x_min = max(0, click_xi - half_size)
@@ -1454,7 +1477,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             refined_y = y_min + max_idx[0]
             refined_x = x_min + max_idx[1]
             
-            print(f"DEBUG: Local maximum found at ({refined_x}, {refined_y})")
             
             # Calculate the refined radius from image center
             center_x, center_y = N / 2, N / 2
@@ -1483,20 +1505,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                 resolution_type = calc_state['resolution_type']
                 custom_resolution = calc_state['custom_resolution']
             
-            print(f"DEBUG: Using resolution_type: {resolution_type}, custom_resolution: {custom_resolution}")
             resolution, _ = get_resolution_info(resolution_type, custom_resolution)
-            print(f"DEBUG: Resolved resolution: {resolution}")
             if resolution is not None:
                 # Calculate apix based on refined radius
                 fft_image_size = cached_fft.size[0]  # PIL image size
                 calculated_apix = (refined_radius * resolution) / fft_image_size
-                print(f"DEBUG: FFT size: {fft_image_size}, calculated apix: {calculated_apix:.4f}")
-                
+
                 # Update the apix slider with the refined value
-                print(f"DEBUG: Updating UI with apix: {calculated_apix:.4f}")
                 ui.update_slider("apix_slider", value=calculated_apix, session=session)
                 ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
-                print(f"DEBUG: UI update completed - Updated apix to {calculated_apix:.4f} Å/px based on refined resolution ring.")
             
             print(f"Autocorrect completed using local maximum search.")
                 
@@ -1746,8 +1763,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Write the file content to temp path  
         # Debug: Check the structure of file_info
-        # print(f"DEBUG: file_info keys: {file_info.keys()}")
-        # print(f"DEBUG: file_info: {file_info}")
         
         # Shiny file upload structure - use the correct key for content
         if 'contents' in file_info:
@@ -2421,31 +2436,68 @@ def server(input: Inputs, output: Outputs, session: Session):
             width={"File Name": "70%", "Nomimal Size": "30%"}
         )
 
-    @output
-    @render_widget  
-    def fft_with_circle():
+    # Create a reactive calc that only depends on essential FFT data
+    @reactive.calc
+    @reactive.event(cached_fft_image, image_data)
+    def fft_widget_data():
+        """Calculate FFT widget data only when essential data changes"""
         from shiny import req
         req(image_data.get() is not None)
-        
+
         # Check if FFT has been calculated
         cached_fft = cached_fft_image.get()
         if cached_fft is None:
-            # Return None to show nothing when no FFT has been calculated
             return None
-        
-        print("=== CREATING NEW FFT WIDGET (should only happen on Calc FFT) ===")
-        print(f"DEBUG: fft_with_circle triggered - cached_fft exists: {cached_fft is not None}")
-        
+
         # Use the cached FFT image (already has current contrast applied)
         fft_img = cached_fft.copy()
-        
         # Convert PIL image to numpy array for Plotly
         fft_arr = np.array(fft_img.convert('L')).astype(np.uint8)
+
+        # Get resolution parameters for hover text (included in data calculation)
+        nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else 1.0
+        current_resolution_type = input.resolution_type()
+        current_custom_resolution = input.custom_resolution()
+
+        # Get resolution from resolution type or custom value
+        if current_resolution_type and current_resolution_type != "Custom":
+            resolution_map = {
+                "Graphene (2.13 Å)": 2.13,
+                "Graphene (100)": 2.13,
+                "Graphene (110)": 1.23,
+                "Gold (2.355 Å)": 2.355,
+                "Gold (111)": 2.35,
+                "Gold (200)": 2.04,
+                "Gold (220)": 1.44,
+                "Ice (3.661 Å)": 3.661
+            }
+            target_resolution = resolution_map.get(current_resolution_type, 2.13)
+        else:
+            target_resolution = current_custom_resolution if current_custom_resolution else 2.13
+
+        return {
+            'fft_arr': fft_arr,
+            'nominal_apix': nominal_apix,
+            'target_resolution': target_resolution
+        }
+
+    @output
+    @render_widget
+    def fft_with_circle():
+        widget_data = fft_widget_data()
+        if widget_data is None:
+            return None
+
+        fft_arr = widget_data['fft_arr']
+        nominal_apix = widget_data['nominal_apix']
+        target_resolution = widget_data['target_resolution']
+
+        print("=== CREATING NEW FFT WIDGET (should only happen on Calc FFT) ===")
 
         # Create the FFT figure manually to ensure click events work
         # Add unique identifier to force complete recreation
         fig = go.Figure()
-        
+
         # Add heatmap for display
         fig.add_trace(go.Heatmap(
             z=fft_arr,
@@ -2456,7 +2508,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             hoverinfo="skip",  # Disable hover for heatmap
             opacity=1.0
         ))
-        
+
         # Add transparent scatter overlay to capture clicks and mouse events
         # Create a grid of invisible points that cover the entire FFT
         y_coords, x_coords = np.meshgrid(
@@ -2464,18 +2516,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             np.arange(0, fft_arr.shape[1], 2),  # Every 2 pixels for performance
             indexing='ij'
         )
-        
+
         # Calculate tentative apix for each point in the grid
-        # Use static values to avoid reactive dependencies during widget creation
-        # These will be used only for initial hover calculations
-        nominal_apix = 1.0  # Default value
-        resolution_type = 'Graphene'  # Default resolution
-        custom_resolution = None
-            
-        # Get target resolution
-        target_resolution, _ = get_resolution_info(resolution_type, custom_resolution)
-        if target_resolution is None:
-            target_resolution = 2.13  # Default to graphene
+        # Use resolution parameters from widget data (no direct input dependencies)
             
         # Calculate tentative apix for each grid point
         # Distance from center to each point
@@ -2614,7 +2657,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                     max_x = x_min + max_x_local
                     max_y = y_min + max_y_local
                     
-                    print(f"DEBUG: Click at ({click_x:.1f}, {click_y:.1f}), found local max at ({max_x}, {max_y})")
                     
                     # Calculate circle radius from image center to the local maximum
                     r = ((max_x-cx)**2 + (max_y-cy)**2)**0.5
@@ -2675,7 +2717,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                     lattice_points_storage.set(new_points)
                     
                     print(f"Added lattice point: ({snapped_x}, {snapped_y}). Total points: {len(new_points)}")
-                    # print(f"[DEBUG] Current mode storage: {current_mode_storage.get()}")
                     
                     # Note: Green circle display is handled by the reactive effect for lattice_points_storage
                     # No need to add shapes directly here - it will be handled automatically
@@ -2714,10 +2755,10 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Store the widget for in-place overlay updates (ellipse, etc.)
         fft_widget.set(fw)
-        
+
         # Remove direct on_relayout handler from FigureWidget (was not working)
         # Relayout events will be handled by Shiny's input.fft_with_circle_relayout event
-        
+
         print(f"=== FFT FIGURE CREATED WITH CLICK AND SHAPE UPDATE CALLBACKS ENABLED ===")
         return fw
 
@@ -2929,13 +2970,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         widget = fft_widget.get()
         if widget is None:
-            # print("[DEBUG] No FFT widget available for lattice point overlay")
             return
         
         lattice_points = lattice_points_storage.get()
         tuned_markers = tuned_markers_storage.get()
         current_mode = current_mode_storage.get()
-        # print(f"[DEBUG] Lattice overlay effect - points: {len(lattice_points)}, tuned: {len(tuned_markers)}, mode: {current_mode}")
         
         # Get current shapes and filter out lattice point circles and ellipses
         current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
@@ -2991,7 +3030,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Add lattice points if in Lattice Point mode
         if current_mode == 'Lattice Point':
-            # print(f"[DEBUG] Adding {len(lattice_points)} green circles for lattice points")
             for pt in lattice_points:
                 x, y = pt[0], pt[1]
                 # Add green circle for each lattice point
@@ -3003,10 +3041,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'editable': False
                 }
                 preserved_shapes.append(lattice_circle)
-                # print(f"[DEBUG] Added green circle at ({x}, {y})")
                 
             # Add tuned markers as red crosshairs
-            # print(f"[DEBUG] Adding {len(tuned_markers)} red crosshairs for tuned markers")
             for pt in tuned_markers:
                 x, y = pt[0], pt[1]
                 crosshair_size = 6  # Half-length of crosshair arms
@@ -3030,7 +3066,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'editable': False
                 }
                 preserved_shapes.append(vertical_line)
-                # print(f"[DEBUG] Added red crosshair at ({x}, {y})")
         
         # Add tuned resolution ring if in Resolution Ring mode and available
         if current_mode == 'Resolution Ring':
@@ -3053,9 +3088,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         'editable': False
                     }
                     preserved_shapes.append(tuned_ring)
-                    # print(f"[DEBUG] Added red tuned resolution ring at radius {tuned_radius:.3f}")
         # else:
-            # print(f"[DEBUG] Not adding lattice circles - mode is: {current_mode}")
         
         # Note: Fitted ellipse is now handled as a TRACE by fit_markers function, not as a shape
         # This prevents duplicate ellipses (one trace + one shape)
@@ -3423,8 +3456,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 x_range = [heatmap_data['radii'][0], heatmap_data['radii'][-1]]
             
             # Calculate target radius for auto-zoom
-            # Get resolution from resolution type or custom value
-            if calc_state['resolution_type'] and calc_state['resolution_type'] != "Custom":
+            # Get resolution from current input (not cached state) for real-time updates
+            current_resolution_type = input.resolution_type()
+            current_custom_resolution = input.custom_resolution()
+            if current_resolution_type and current_resolution_type != "Custom":
                 resolution_map = {
                     "Graphene (2.13 Å)": 2.13,
                     "Graphene (100)": 2.13,
@@ -3435,9 +3470,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                     "Gold (220)": 1.44,
                     "Ice (3.661 Å)": 3.661
                 }
-                target_resolution = resolution_map.get(calc_state['resolution_type'], 2.13)
+                target_resolution = resolution_map.get(current_resolution_type, 2.13)
             else:
-                target_resolution = calc_state['custom_resolution'] if calc_state['custom_resolution'] else 2.13
+                target_resolution = current_custom_resolution if current_custom_resolution else 2.13
             
             # Get nominal apix and region size
             nominal_apix = float(input.nominal_apix())
@@ -3576,7 +3611,23 @@ def server(input: Inputs, output: Outputs, session: Session):
         res_low = cached_heatmap_data['res_low']
         res_high = cached_heatmap_data['res_high']
         current_apix = cached_heatmap_data['apix']
-        target_resolution = cached_heatmap_data['target_resolution']
+        # Get current resolution from dropdown instead of cached value for real-time updates
+        current_resolution_type = input.resolution_type()
+        current_custom_resolution = input.custom_resolution()
+        if current_resolution_type and current_resolution_type != "Custom":
+            resolution_map = {
+                "Graphene (2.13 Å)": 2.13,
+                "Graphene (100)": 2.13,
+                "Graphene (110)": 1.23,
+                "Gold (2.355 Å)": 2.355,
+                "Gold (111)": 2.35,
+                "Gold (200)": 2.04,
+                "Gold (220)": 1.44,
+                "Ice (3.661 Å)": 3.661
+            }
+            target_resolution = resolution_map.get(current_resolution_type, 2.13)
+        else:
+            target_resolution = current_custom_resolution if current_custom_resolution else 2.13
         freq_low = cached_heatmap_data['freq_low']
         freq_high = cached_heatmap_data['freq_high']
         display_range = cached_heatmap_data['display_range']
@@ -3597,8 +3648,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             print(f"🔍 Original NuFFT shape: {heatmap_data.shape} = (theta={theta_samples}, r={r_samples})")
             
-            # DEBUG: Check if the source NuFFT data has angular variation
-            print(f"🔍 DEBUGGING SOURCE NuFFT DATA:")
             print(f"  Full heatmap data shape: {heatmap_data.shape}")
             print(f"  Sample from different theta values:")
             for theta_idx in [0, theta_samples//4, theta_samples//2, 3*theta_samples//4]:
@@ -3651,8 +3700,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             original_focused_res_range = res_range_array[start_idx:end_idx]
             original_focused_freq_range = spatial_freq_array[start_idx:end_idx]
             
-            # DEBUG: Check if the original data has angular variation
-            print(f"🔍 DEBUGGING ANGULAR VARIATION:")
             print(f"  Original focused data shape: {original_focused_data.shape}")
             print(f"  Sample angular profiles (first 5 theta values):")
             for theta_idx in range(min(5, original_focused_data.shape[0])):
@@ -3689,7 +3736,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # TEMPORARY: Skip interpolation to debug the source data issue
             # Use original focused data directly to see if the stripe issue is in source data or interpolation
-            print(f"🔧 DEBUGGING: Using original focused data without interpolation")
             focused_data = original_focused_data
             focused_res_range = original_focused_res_range
             focused_freq_range = 1.0 / focused_res_range
@@ -3991,7 +4037,23 @@ def server(input: Inputs, output: Outputs, session: Session):
         res_low = cached_power_data['res_low']
         res_high = cached_power_data['res_high']
         current_apix = cached_power_data['apix']
-        target_resolution = cached_power_data['target_resolution']
+        # Get current resolution from dropdown instead of cached value for real-time updates
+        current_resolution_type = input.resolution_type()
+        current_custom_resolution = input.custom_resolution()
+        if current_resolution_type and current_resolution_type != "Custom":
+            resolution_map = {
+                "Graphene (2.13 Å)": 2.13,
+                "Graphene (100)": 2.13,
+                "Graphene (110)": 1.23,
+                "Gold (2.355 Å)": 2.355,
+                "Gold (111)": 2.35,
+                "Gold (200)": 2.04,
+                "Gold (220)": 1.44,
+                "Ice (3.661 Å)": 3.661
+            }
+            target_resolution = resolution_map.get(current_resolution_type, 2.13)
+        else:
+            target_resolution = current_custom_resolution if current_custom_resolution else 2.13
         freq_low = cached_power_data['freq_low']
         freq_high = cached_power_data['freq_high']
         display_range = cached_power_data['display_range']
@@ -4171,7 +4233,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             import time
             click_start = time.time()
             print(f"🖱️  CLICK EVENT START: {click_start:.3f}")
-            print(f"DEBUG: NuFFT click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
             if points.point_inds:
                 try:
                     # Get clicked point information
@@ -4188,13 +4249,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                         
                         # Add vertical line at click position using add_vline method
                         if x_val is not None:
-                            #print(f"DEBUG: Adding green line at x_val={x_val}")
                             
                             # First clear any existing green lines
                             with widget.batch_update():
                                 # Clear existing shapes by filtering out green lines
                                 current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
-                                #print(f"DEBUG: Current shapes count: {len(current_shapes)}")
                                 
                                 # More robust filtering - check for green color in different ways
                                 preserved_shapes = []
@@ -4211,7 +4270,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     if not is_green_line:
                                         preserved_shapes.append(shape)
                                 
-                                #print(f"DEBUG: Preserved shapes count: {len(preserved_shapes)}")
                                 
                                 # Set the filtered shapes first
                                 widget.layout.shapes = preserved_shapes
@@ -4225,7 +4283,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                                 else:
                                     y_min, y_max = 0, 1
                                 
-                                #print(f"DEBUG: Adding green line with add_shape at x={x_val}, y_range={y_min} to {y_max}")
                                 
                                 # Use add_shape method which should force a redraw
                                 widget.add_shape(
@@ -4234,10 +4291,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     y0=y_min-1, y1=y_max+1,
                                     line=dict(color="green", width=2)
                                 )
-                                print(f"DEBUG: Green line added successfully using add_shape")
                                 
                             except Exception as e:
-                                print(f"DEBUG: add_shape failed: {e}, trying fallback")
                                 
                                 # Fallback to direct layout manipulation
                                 with widget.batch_update():
@@ -4250,7 +4305,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     }
                                     current_shapes.append(green_line_shape)
                                     widget.layout.shapes = current_shapes
-                                    print(f"DEBUG: Green line added using fallback method")
                         
                         # Update the apix slider directly to the tentative apix value
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
@@ -4319,7 +4373,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             import time
             click_start = time.time()
             print(f"🖱️  HEATMAP CLICK EVENT START: {click_start:.3f}")
-            print(f"DEBUG: NuFFT heatmap click handler called, points: {len(points.point_inds) if points.point_inds else 0}")
 
             if points.point_inds:
                 try:
@@ -4354,41 +4407,80 @@ def server(input: Inputs, output: Outputs, session: Session):
                         focused_res_range = res_range_array[start_idx:end_idx]
                         focused_freq_range = 1.0 / focused_res_range
 
-                        # Convert y-coordinate to spatial frequency
-                        y_idx = int(round(y_val))
-                        if 0 <= y_idx < len(focused_freq_range):
-                            clicked_spatial_freq = focused_freq_range[y_idx]
+                        # Extract apix value directly from hover text to ensure exact match
+                        try:
+                            # Get the widget to access hover text
+                            widget = nufft_heatmap_widget.get()
+                            if widget and hasattr(widget.data[0], 'text'):
+                                # Access the hover text array
+                                hover_text_array = widget.data[0].text
+                                if hover_text_array is not None and len(hover_text_array) > 0:
+                                    # Convert coordinates to hover text indices
+                                    x_idx = int(round(points.xs[0])) if points.xs else 0
+                                    y_idx = int(round(y_val))
 
-                            # Calculate tentative apix using same formula as power curve
-                            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else cached_heatmap_data['apix']
-                            target_resolution = cached_heatmap_data['target_resolution']
-                            target_spatial_freq = 1.0 / target_resolution
-                            tentative_apix = nominal_apix * (clicked_spatial_freq / target_spatial_freq)
+                                    # Safely access the hover text
+                                    if (0 <= y_idx < len(hover_text_array) and
+                                        0 <= x_idx < len(hover_text_array[y_idx])):
+                                        hover_text = hover_text_array[y_idx][x_idx]
 
-                            print(f"DEBUG: Heatmap click - y_val={y_val}, y_idx={y_idx}")
-                            print(f"DEBUG: Spatial freq at click: {clicked_spatial_freq:.6f} 1/Å")
-                            print(f"DEBUG: Tentative apix: {tentative_apix:.4f} Å/px")
-
-                            # Update apix slider and text
-                            if 0.01 <= tentative_apix <= 6.0:
-                                # Set flag to prevent NuFFT recalculation during UI update
-                                apix_updating_from_nufft_click.set(True)
-
-                                ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
-                                ui.update_slider("apix_slider", value=tentative_apix)
-
-                                # Clear flag after a short delay
-                                import threading
-                                def clear_flag():
-                                    time.sleep(0.1)
-                                    apix_updating_from_nufft_click.set(False)
-                                threading.Thread(target=clear_flag, daemon=True).start()
-
-                                print(f"DEBUG: Updated apix to {tentative_apix:.4f} Å/px based on heatmap click")
+                                        # Extract apix value from hover text using regex
+                                        import re
+                                        apix_match = re.search(r'<b>Tentative Apix:</b>\s*([\d.]+)\s*Å/px', hover_text)
+                                        if apix_match:
+                                            tentative_apix = float(apix_match.group(1))
+                                        else:
+                                            raise ValueError("Could not extract apix from hover text")
+                                    else:
+                                        raise IndexError("Click coordinates out of hover text bounds")
+                                else:
+                                    raise ValueError("No hover text available")
                             else:
-                                print(f"DEBUG: Tentative apix {tentative_apix:.4f} out of valid range [0.01, 6.0]")
+                                raise ValueError("Widget or hover text not accessible")
+
+                        except Exception as e:
+                            # Fallback to calculation if hover text extraction fails
+                            y_idx = int(round(y_val))
+                            if 0 <= y_idx < len(focused_freq_range):
+                                clicked_spatial_freq = focused_freq_range[y_idx]
+                                nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else cached_heatmap_data['apix']
+                                current_resolution_type = input.resolution_type()
+                                current_custom_resolution = input.custom_resolution()
+                                if current_resolution_type and current_resolution_type != "Custom":
+                                    resolution_map = {
+                                        "Graphene (2.13 Å)": 2.13,
+                                        "Graphene (100)": 2.13,
+                                        "Graphene (110)": 1.23,
+                                        "Gold (2.355 Å)": 2.355,
+                                        "Gold (111)": 2.35,
+                                        "Gold (200)": 2.04,
+                                        "Gold (220)": 1.44,
+                                        "Ice (3.661 Å)": 3.661
+                                    }
+                                    target_resolution = resolution_map.get(current_resolution_type, 2.13)
+                                else:
+                                    target_resolution = current_custom_resolution if current_custom_resolution else 2.13
+                                target_spatial_freq = 1.0 / target_resolution
+                                tentative_apix = nominal_apix * (clicked_spatial_freq / target_spatial_freq)
+
+                        # Update apix slider and text (regardless of extraction method)
+                        if 0.01 <= tentative_apix <= 6.0:
+                            # Set flag to prevent NuFFT recalculation during UI update
+                            apix_updating_from_nufft_click.set(True)
+
+                            ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
+                            ui.update_slider("apix_slider", value=tentative_apix)
+
+                            # Clear flag after a short delay
+                            import threading
+                            def clear_flag():
+                                time.sleep(0.1)
+                                apix_updating_from_nufft_click.set(False)
+                            threading.Thread(target=clear_flag, daemon=True).start()
+
+                            pass
                         else:
-                            print(f"DEBUG: y_idx {y_idx} out of range [0, {len(focused_freq_range)})")
+                            pass
 
                     click_end = time.time()
                     click_duration = click_end - click_start
@@ -4620,8 +4712,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     def apix_centered_by_nominal_plot():
         """Live vertical scatter: Pixel size centered by nominal value, from region_table_data, using FigureWidget for in-place updates."""
         df = region_table_data.get().copy()
-        if df is None or df.empty or 'Filename' not in df.columns or 'Apix' not in df.columns or 'Nominal' not in df.columns:
-            #print("[DEBUG] DataFrame is empty or missing columns.")
+        if df is None or df.empty or 'Filename' not in df.columns or 'Pixel Size' not in df.columns or 'Nominal' not in df.columns:
             fw = FigureWidget()
             apix_centered_widget.set(fw)
             return fw
@@ -4641,11 +4732,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             textbox_nominal = float(input.nominal_apix())
             df.loc[missing_nominal, 'Nominal'] = textbox_nominal
         
-        #print("[DEBUG] DataFrame after ensuring numeric types:\n", df[['Filename', 'Apix', 'Nominal']])
         # Drop rows with missing data
         df = df.dropna(subset=['Apix', 'Nominal'])
         if df.empty:
-            #print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal.")
             fw = FigureWidget()
             apix_centered_widget.set(fw)
             return fw
@@ -4655,8 +4744,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         except Exception:
             nominal_order = list(df['Nominal'].dropna().unique())
         # Apix - Nominal
-        df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Apix'] - row['Nominal'], axis=1)
-        #print("[DEBUG] DataFrame before plotting:\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
+        df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Pixel Size'] - row['Nominal'], axis=1)
         fig = go.Figure()
         # Light blue vertical scatter for each group
         for nominal in nominal_order:
@@ -4723,8 +4811,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         if widget is not None:
             import re
             df = region_table_data.get().copy()
-            if df is None or df.empty or 'Filename' not in df.columns or 'Apix' not in df.columns or 'Nominal' not in df.columns:
-                #print("[DEBUG] DataFrame is empty or missing columns (effect update).")
+            if df is None or df.empty or 'Filename' not in df.columns or 'Pixel Size' not in df.columns or 'Nominal' not in df.columns:
                 with widget.batch_update():
                     # Clear all existing traces
                     while len(widget.data) > 0:
@@ -4748,10 +4835,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 textbox_nominal = float(input.nominal_apix())
                 df.loc[missing_nominal, 'Nominal'] = textbox_nominal
             
-            #print("[DEBUG] DataFrame after ensuring numeric types (effect):\n", df[['Filename', 'Apix', 'Nominal']])
             df = df.dropna(subset=['Apix', 'Nominal'])
             if df.empty:
-                #print("[DEBUG] DataFrame is empty after dropping missing Apix/Nominal (effect).")
                 with widget.batch_update():
                     # Clear all existing traces
                     while len(widget.data) > 0:
@@ -4764,8 +4849,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 nominal_order = sorted(df['Nominal'].dropna().unique())
             except Exception:
                 nominal_order = list(df['Nominal'].dropna().unique())
-            df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Apix'] - row['Nominal'], axis=1)
-            #print("[DEBUG] DataFrame before plotting (effect):\n", df[['Nominal', 'Apix', 'Apix_centered_by_nominal']])
+            df['Apix_centered_by_nominal'] = df.apply(lambda row: row['Pixel Size'] - row['Nominal'], axis=1)
             traces = []
             for nominal in nominal_order:
                 group = df[df['Nominal'] == nominal]
@@ -4956,7 +5040,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     #                             'Filename': [filename],
     #                             'Region Size': [region_size_str],
     #                             'Region Location': [region_location],
-    #                             'Apix': [f"{calculated_apix:.3f}"],
+    #                             'Pixel Size': [f"{calculated_apix:.3f}"],
     #                             'Nominal': [nominal_value]
     #                         })
                             
@@ -5039,7 +5123,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             'Filename': [],
             'Region Size': [],
             'Region Location': [],
-            'Apix': [],
+            'Pixel Size': [],
             'Nominal': []
         })
         region_table_data.set(empty_df)
@@ -5053,7 +5137,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_data = region_table_data.get()
         if len(current_data) == 0:
             # Yield empty CSV if no data
-            yield "Filename,Region Size,Region Location,Apix,Nominal,Apix Stats\n"
+            yield "Filename,Region Size,Region Location,Pixel Size,Nominal,Average Pixel Size\n"
         else:
             # Generate and yield CSV content
             csv_content = current_data.to_csv(index=False)
@@ -5652,32 +5736,32 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'Filename': [filename],
                 'Region Size': [region_size],
                 'Region Location': [region_location],
-                'Apix': [f"{apix_value:.4f}"],
+                'Pixel Size': [f"{apix_value:.4f}"],
                 'Nominal': [nominal_value],
-                'Apix Stats': ['']  # Will be calculated after adding
+                'Average Pixel Size': ['']  # Will be calculated after adding
             })
             
             # Add to existing table data
             current_data = region_table_data.get()
             updated_data = pd.concat([current_data, new_row], ignore_index=True)
             
-            # Calculate statistics for each nominal value and update the Apix Stats column
+            # Calculate statistics for each nominal value and update the Average Pixel Size column
             def update_apix_stats(df):
                 df_copy = df.copy()
-                # Convert Apix column to float for calculations
-                df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Apix'], errors='coerce')
-                
+                # Convert Pixel Size column to float for calculations
+                df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Pixel Size'], errors='coerce')
+
                 # Group by nominal value and calculate stats
                 for nominal in df_copy['Nominal'].unique():
                     mask = df_copy['Nominal'] == nominal
                     apix_values = df_copy.loc[mask, 'Apix_numeric'].dropna()
-                    
+
                     if len(apix_values) > 0:
                         mean_val = apix_values.mean()
                         std_val = apix_values.std() if len(apix_values) > 1 else 0.0
                         stats_str = f"{mean_val:.4f} ± {std_val:.4f}"
-                        df_copy.loc[mask, 'Apix Stats'] = stats_str
-                
+                        df_copy.loc[mask, 'Average Pixel Size'] = stats_str
+
                 return df_copy.drop('Apix_numeric', axis=1)
             
             updated_data = update_apix_stats(updated_data)
