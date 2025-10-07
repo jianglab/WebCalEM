@@ -363,35 +363,29 @@ app_ui = ui.page_fillable(
                                 placement="top"
                             ),
                             ui.div(
-                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 8px;"},
-                                # Left: Main content area with NuFFT power curve and heatmap  
+                                {"style": "height: 100%; display: flex; gap: 8px;"},
+                                # Left: Main content area with NuFFT power curve and heatmap
                                 ui.div(
-                                    {"style": "height: 100%; display: flex; flex-direction: column;"},
+                                    {"style": "height: 100%; display: flex; flex-direction: column; flex: 1;"},
                                     # Top: Power curve plot (60% height) - shows first for quick interaction
-                                    ui.div(
-                                        {"style": "flex: 6; display: flex; flex-direction: column; min-height: 0;"},
-                                        ui.div(
-                                            {"style": "padding: 5px 10px; font-size: 14px; font-weight: 500; border-bottom: 1px solid #dee2e6; background-color: #f8f9fa;"},
-                                            ui.tooltip(
-                                                "1D Power Curve",
-                                                "Click on peaks to calculate tentative pixel size. For multiple peaks, select the leftmost one.",
-                                                placement="top"
-                                            )
-                                        ),
-                                        ui.div(
-                                            {"style": "flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;"},
-                                            output_widget("nufft_power_curve")
-                                        )
-                                    ),
-                                    # Bottom: NuFFT focused heatmap (40% height) - shows after click
-                                    ui.div(
-                                        {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
-                                        output_widget("nufft_heatmap")
-                                    )
+                                    output_widget("nufft_power_curve"),
+                                    output_widget('nufft_heatmap')
+                                    # ui.div(
+                                    #     {"style": "flex: 6; display: flex; flex-direction: column; min-height: 0;"},
+                                    #     ui.div(
+                                    #         {"style": "flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                                    #         output_widget("nufft_power_curve")
+                                    #     )
+                                    # ),
+                                    # # Bottom: NuFFT focused heatmap (40% height) - shows after click
+                                    # ui.div(
+                                    #     {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                    #     output_widget("nufft_heatmap")
+                                    # )
                                 ),
                                 # Right: Controls spanning entire height
                                 ui.div(
-                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 5px;"},
+                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 240px; padding: 5px; flex-shrink: 0;"},
                                     ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
                                     # ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
                                     # ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
@@ -691,6 +685,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         if files_info:
             selected_file_index.set(0)
             # Set the nominal apix from the first file
+            nominal_apix_value.set(files_info[0]['nominal_apix'])  # Store in reactive value FIRST
+            nominal_apix_ui_synced.set(False)  # Mark as not yet synced
             ui.update_numeric("nominal_apix", value=files_info[0]['nominal_apix'])
     
     # Handle table row selection for file switching  
@@ -710,6 +706,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                     files_data = uploaded_files_data.get()
                     if files_data and new_index < len(files_data):
                         selected_file = files_data[new_index]
+                        nominal_apix_value.set(selected_file['nominal_apix'])  # Store in reactive value FIRST
+                        nominal_apix_ui_synced.set(False)  # Mark as not yet synced
                         ui.update_numeric("nominal_apix", value=selected_file['nominal_apix'])
         except Exception as e:
             print(f"Error handling table selection: {e}")
@@ -745,7 +743,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     image_data = reactive.Value(None)
     image_apix = reactive.Value(1.0)
     image_filename = reactive.Value(None)
-    
+    nominal_apix_value = reactive.Value(0.75)  # Default nominal apix for initial calculation
+    nominal_apix_ui_synced = reactive.Value(False)  # Track if UI has been updated with extracted value
+
     # Add reactive values for original and binned image data
     original_image_data = reactive.Value(None)
     binned_image_data = reactive.Value(None)
@@ -901,6 +901,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         'resolution_type': None,
         'custom_resolution': None
     })
+
+    # Track if NuFFT calculation has been requested
+    nufft_calculation_requested = reactive.Value(False)
 
     # Track FFT widget creation to prevent duplicates
     fft_widget_last_created = reactive.Value(None)
@@ -1844,6 +1847,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Extract nominal apix from filename and update the textbox and slider
             nominal_value = extract_nominal(original_filename)
+            nominal_apix_value.set(nominal_value)  # Store in reactive value FIRST
+            nominal_apix_ui_synced.set(False)  # Mark as not yet synced
             ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
             ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
@@ -2138,24 +2143,40 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_zoom_state = image_zoom_state.get()
         current_fft = cached_fft_image.get()
         current_calc_state = fft_calculation_state.get()
-        
+
         # Only auto-calculate if we have image, region, but no FFT yet
-        if (current_image is not None and 
+        if (current_image is not None and
             current_zoom_state.get('drawn_region') is not None and
             current_zoom_state.get('is_zoomed') == True and
-            current_fft is None and 
+            current_fft is None and
             current_calc_state.get('region') is None):
-            
-            print("🚀 Auto-calculating FFT for pre-selected region...")
+
+            print(f"\n{'='*80}")
+            print("🟣 STEP 3: Auto-calculating FFT for pre-selected region...")
             print(f"   Current zoom state drawn_region: {current_zoom_state.get('drawn_region')}")
-            
+            print(f"{'='*80}")
+
+            # Clear all previous FFT data and trigger complete refresh (same as manual Calc FFT button)
+            # Only clear if they have values to avoid unnecessary reactive updates
+            if cached_fft_image.get() is not None:
+                cached_fft_image.set(None)
+            if cached_nufft_heatmap_data.get() is not None:
+                cached_nufft_heatmap_data.set(None)
+            if cached_nufft_power_data.get() is not None:
+                cached_nufft_power_data.set(None)
+            nufft_calculation_requested.set(False)  # Reset calculation request
+            if fft_widget.get() is not None:
+                fft_widget.set(None)
+
             # Trigger FFT calculation by incrementing the base trigger (same as manual Calc FFT button)
             current_trigger = base_fft_trigger.get()
             base_fft_trigger.set(current_trigger + 1)
-            
+
             # Also trigger autoscale (same as manual Calc FFT button)
             autoscale_trigger.set(autoscale_trigger.get() + 1)
-            
+
+            # Note: NuFFT calculation will be requested automatically in the base_fft_trigger effect
+
             print("✅ Automatic FFT calculation triggered")
 
     # FFT calculation is now done directly in fft_with_circle widget function
@@ -2772,7 +2793,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(base_fft_trigger)
     def _():
         """Update cached FFT images when FFT is manually triggered (Calc FFT button)."""
-        print("FFT calculation triggered - checking drawn region")
+        print(f"\n{'='*80}")
+        print("🔵 STEP 4: base_fft_trigger fired - FFT calculation starting")
+        print(f"{'='*80}")
         
         region = get_current_region()
         if region is not None:
@@ -2796,35 +2819,65 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'resolution_type': input.resolution_type(),
                 'custom_resolution': input.custom_resolution()
             })
-            
+
+            # Request NuFFT calculation now that state is set up
+            print("🟢 STEP 4b: Setting nufft_calculation_requested = True")
+            nufft_calculation_requested.set(True)
+
             print("✅ FFT image cached successfully")
+            print(f"{'='*80}\n")
         else:
             print("❌ No region available for FFT calculation")
 
-    # Track if NuFFT calculation has been requested
-    nufft_calculation_requested = reactive.Value(False)
-    
     @reactive.Effect
     @reactive.event(input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq, input.nufft_display_range, nufft_calculation_requested)
     def calculate_nufft_when_requested():
         """Calculate NuFFT data ONLY when sampling parameters change or explicitly requested."""
+        import traceback as tb
+        print(f"\n{'='*80}")
+        print(f"🔔 calculate_nufft_when_requested CALLED - requested={nufft_calculation_requested.get()}")
+        print(f"🔔 Call stack (last 3 frames):")
+        for line in tb.format_stack()[-4:-1]:
+            print(f"   {line.strip()}")
+
         if not nufft_calculation_requested.get():
+            print("   ❌ NuFFT calculation not requested, skipping")
+            print(f"{'='*80}\n")
             return
-        
+
         # Get current slider values
         r_freq = input.nufft_r_sampling_freq()
         theta_freq = input.nufft_theta_sampling_freq()
         display_range = input.nufft_display_range()
-        
+
+        print(f"   ✅ NuFFT calculation IS requested - proceeding with r_freq={r_freq}, theta_freq={theta_freq}, range={display_range}%")
+
         try:
             # Check if we have the required NuFFT calculation state
             calc_state = nufft_calculation_state.get()
             if calc_state['region'] is None:
+                print("   ❌ No region in calc_state, skipping")
                 return
             
             # Get current parameters for NuFFT calculation - use NOMINAL apix only
-            current_apix = float(input.nominal_apix())
-            
+            # During startup race condition: use stored value if UI hasn't synced yet
+            # After that: always use UI input (allows manual user changes)
+            input_apix = float(input.nominal_apix()) if input.nominal_apix() else 1.0
+            stored_apix = float(nominal_apix_value.get())
+            ui_synced = nominal_apix_ui_synced.get()
+
+            if not ui_synced:
+                # UI hasn't synced yet (startup race condition), use stored value
+                current_apix = stored_apix
+                # Mark as synced now so future calculations use UI input
+                nominal_apix_ui_synced.set(True)
+                print(f"   📏 USING nominal_apix from stored value (UI not synced yet): {current_apix}")
+            else:
+                # UI is synced, use whatever user has set
+                current_apix = input_apix
+                print(f"   📏 USING nominal_apix from UI input (synced): {current_apix}")
+            print(f"   📏 (input={input_apix}, stored={stored_apix}, ui_synced={ui_synced})")
+
             # Get target resolution and create ±10% range around it
             target_resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
             if target_resolution is None:
@@ -2898,7 +2951,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                 'display_range': display_range
             })
             
-            # Cache the NuFFT power curve data  
+            # Cache the NuFFT power curve data
+            print(f"\n{'='*80}")
+            print(f"💾 STEP 5b: SETTING cached_nufft_power_data with apix={current_apix}")
+            print(f"     This will trigger nufft_power_curve render!")
+            print(f"{'='*80}\n")
             cached_nufft_power_data.set({
                 'pwr_curve': pwr_curve,
                 'pwr2d_raw': pwr2d_raw,
@@ -4012,29 +4069,39 @@ def server(input: Inputs, output: Outputs, session: Session):
             nufft_heatmap_widget.set(None)
             return go.FigureWidget()
     
+    # Track render count for debugging
+    render_count = {"count": 0}
+
     @output
     @render_widget
     def nufft_power_curve():
         from shiny import req
         import time
+        import traceback as tb
+
+        render_count["count"] += 1
         power_plot_start = time.time()
-        print(f"📈 POWER CURVE PLOT START: {power_plot_start:.3f}")
-        
-        # Require NuFFT calculation state to exist
-        calc_state = nufft_calculation_state.get()
-        req(calc_state['region'] is not None)
-        
-        # Request NuFFT calculation if not already done
-        nufft_calculation_requested.set(True)
-        
-        # Get cached data
+
+        print(f"\n{'='*80}")
+        print(f"📈 POWER CURVE RENDER #{render_count['count']} CALLED at {power_plot_start:.3f}")
+        print(f"📈 Call stack (last 3 frames):")
+        for line in tb.format_stack()[-4:-1]:
+            print(f"   {line.strip()}")
+
+        # Get cached data - this is the ONLY reactive dependency we need for rendering
+        # Don't read nufft_calculation_state here as it causes extra re-renders
         cached_power_data = cached_nufft_power_data.get()
+        print(f"📈 cached_power_data exists: {cached_power_data is not None}")
+
+        # Require data to exist - this will prevent rendering until data is available
         if cached_power_data is None:
-            print("⏳ Waiting for NuFFT power curve data...")
-            return go.FigureWidget()  # Return empty widget while calculating
+            print(f"📈 RENDER #{render_count['count']}: No data yet, returning empty widget")
+            print(f"{'='*80}\n")
+            req(False)  # This will stop execution here
         
         print("📈 Using NuFFT power curve data")
-        
+        print(f"   📊 CACHED DATA KEYS: {list(cached_power_data.keys())}")
+
         pwr_curve = cached_power_data['pwr_curve']
         pwr = cached_power_data['pwr2d_raw']
         r_samples = cached_power_data['r_samples']
@@ -4042,26 +4109,24 @@ def server(input: Inputs, output: Outputs, session: Session):
         res_low = cached_power_data['res_low']
         res_high = cached_power_data['res_high']
         current_apix = cached_power_data['apix']
-        # Get current resolution from dropdown instead of cached value for real-time updates
-        current_resolution_type = input.resolution_type()
-        current_custom_resolution = input.custom_resolution()
-        if current_resolution_type and current_resolution_type != "Custom":
-            resolution_map = {
-                "Graphene (2.13 Å)": 2.13,
-                "Graphene (100)": 2.13,
-                "Graphene (110)": 1.23,
-                "Gold (2.355 Å)": 2.355,
-                "Gold (111)": 2.35,
-                "Gold (200)": 2.04,
-                "Gold (220)": 1.44,
-                "Ice (3.661 Å)": 3.661
-            }
-            target_resolution = resolution_map.get(current_resolution_type, 2.13)
-        else:
-            target_resolution = current_custom_resolution if current_custom_resolution else 2.13
+        print(f"   📊 APIX from cached data: {current_apix}")
+        print(f"   📊 Resolution range: {res_low:.3f} - {res_high:.3f} Å")
+        print(f"   📊 pwr_curve shape: {pwr_curve.shape}")
+        print(f"   📊 pwr_curve min/max/mean: {pwr_curve.min():.6f} / {pwr_curve.max():.6f} / {pwr_curve.mean():.6f}")
+        print(f"   📊 pwr_curve first 10 values: {pwr_curve[:10]}")
+        print(f"   📊 pwr_curve last 10 values: {pwr_curve[-10:]}")
+
+        # Get values from cached data to avoid triggering re-renders when inputs change
+        # The cached data already has the correct target_resolution calculated during NuFFT computation
+        target_resolution = cached_power_data['target_resolution']
         freq_low = cached_power_data['freq_low']
         freq_high = cached_power_data['freq_high']
         display_range = cached_power_data['display_range']
+
+        # Read log_y input
+        log_y = input.nufft_log_y()
+        print(f"   📊 Using cached values: target_resolution={target_resolution:.3f}Å, log_y={log_y}")
+        print(f"   📊 Reactive dependencies: checking what triggered this render...")
         apix_source = f"Nominal Apix: {current_apix:.3f}"
         
         print(f"   pwr_curve shape: {pwr_curve.shape if hasattr(pwr_curve, 'shape') else type(pwr_curve)}")
@@ -4098,7 +4163,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             #     y_data = y_data - baseline
             #     y_data = y_data - y_data.min()
             
-            if input.nufft_log_y():
+            if log_y:
                 y_data = np.log1p(np.abs(y_data))
                 y_title = "Log(Intensity)"
             else:
@@ -4111,6 +4176,42 @@ def server(input: Inputs, output: Outputs, session: Session):
             target_spatial_freq = 1.0 / target_resolution
             tentative_apix_array = nominal_apix * (spatial_freq_array / target_spatial_freq)
             
+            # Find local maxima using scipy
+            from scipy.signal import find_peaks
+
+            # Find peaks with some minimum prominence to avoid noise
+            # prominence ensures we only get significant peaks
+            peaks, properties = find_peaks(y_data, prominence=0.5)
+
+            print(f"   🔍 FOUND {len(peaks)} LOCAL MAXIMA in power curve")
+            if len(peaks) > 0:
+                # Get the highest peak (maximum intensity)
+                peak_intensities = y_data[peaks]
+                highest_peak_idx = peaks[np.argmax(peak_intensities)]
+                peak_freq = spatial_freq_array[highest_peak_idx]
+                peak_res = res_range_array[highest_peak_idx]
+                peak_intensity = y_data[highest_peak_idx]
+
+                # Calculate the actual apix based on this peak being at the target resolution
+                # If the peak is at peak_freq, and we want it to be at target_spatial_freq,
+                # then: actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
+                actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
+
+                print(f"   🎯 HIGHEST PEAK at freq={peak_freq:.4f} (1/Å), resolution={peak_res:.3f}Å")
+                print(f"   📏 CALCULATED APIX from peak: {actual_apix:.4f} Å/px")
+                print(f"   📊 Peak intensity: {peak_intensity:.4f}")
+
+                # Store for later use
+                peak_info = {
+                    'freq': peak_freq,
+                    'res': peak_res,
+                    'intensity': peak_intensity,
+                    'apix': actual_apix
+                }
+            else:
+                print(f"   ⚠️  NO SIGNIFICANT PEAKS FOUND")
+                peak_info = None
+
             # Create the plot with hoverable vertical dash line
             fig = go.Figure()
             fig.add_trace(go.Scatter(
@@ -4123,7 +4224,32 @@ def server(input: Inputs, output: Outputs, session: Session):
                              '<b>For resolution:</b> ' + f'{target_resolution:.3f} Å<extra></extra>',
                 customdata=np.column_stack([res_range_array, tentative_apix_array])
             ))
-            
+
+            # Add red vertical line at the highest peak
+            if peak_info is not None:
+                fig.add_shape(
+                    type="line",
+                    x0=peak_info['freq'], x1=peak_info['freq'],
+                    y0=0, y1=1,
+                    yref="paper",
+                    line=dict(color="red", width=2, dash="solid"),
+                    name="Peak Maximum"
+                )
+                # Add annotation for the peak
+                # fig.add_annotation(
+                #     x=peak_info['freq'],
+                #     y=peak_info['intensity'],
+                #     text=f"<br>Apix: {peak_info['apix']:.4f}",
+                #     showarrow=True,
+                #     arrowhead=2,
+                #     arrowcolor="red",
+                #     ax=16,
+                #     ay=-16,
+                #     bgcolor="rgba(255,255,255,0.8)",
+                #     bordercolor="red",
+                #     borderwidth=1
+                # )
+
             # Removed target resolution line - no longer needed
             # Note: Green vertical line for clicks is now added directly in click handler
             
@@ -4144,12 +4270,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                 x_ticktext = []
             
             fig.update_layout(
-                title=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})',
+                title=dict(
+                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For the peak is multiplet, select the leftmost subpeak.</sub>',
+                    font=dict(size=16)
+                ),
                 xaxis_title='Spatial Resolution (1/Å)',
                 yaxis_title=y_title,
                 height=300,
                 width=650,  # Fixed width to match heatmap
-                margin=dict(l=60, r=20, t=40, b=60),
+                margin=dict(l=60, r=20, t=80, b=60),  # Increased top margin for subtitle
                 autosize=False,
                 showlegend=False,
                 hovermode='x unified',  # Show unified hover with vertical line
@@ -4183,12 +4312,27 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Store widget for click event access
             nufft_power_widget.set(fw)
-            
+
+            # Update apix slider and exact value with the calculated apix from the peak
+            if peak_info is not None:
+                calculated_apix = peak_info['apix']
+                print(f"   📝 UPDATING apix_slider and apix_exact_str to {calculated_apix:.4f}")
+                ui.update_slider("apix_slider", value=calculated_apix)
+                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}")
+
             power_plot_end = time.time()
             power_plot_duration = power_plot_end - power_plot_start
             print(f"🏁 POWER CURVE PLOT COMPLETED in {power_plot_duration:.3f} seconds")
             print(f"🎯 TOTAL END-TO-END TAB SWITCH TO PLOTS VISIBLE: Check previous timing logs")
-            
+
+            # Print what's actually being plotted
+            if len(fw.data) > 0:
+                plotted_y = fw.data[0].y
+                print(f"   📈 ACTUALLY PLOTTING: {len(plotted_y)} points")
+                print(f"   📈 Y-data min/max/mean: {np.min(plotted_y):.6f} / {np.max(plotted_y):.6f} / {np.mean(plotted_y):.6f}")
+                print(f"   📈 Y-data first 10: {plotted_y[:10]}")
+                print(f"   📈 Y-data last 10: {plotted_y[-10:]}")
+
             return fw
             
         except Exception as e:
@@ -4255,27 +4399,27 @@ def server(input: Inputs, output: Outputs, session: Session):
                         # Add vertical line at click position using add_vline method
                         if x_val is not None:
                             
-                            # First clear any existing green lines
+                            # First clear any existing green and red lines
                             with widget.batch_update():
-                                # Clear existing shapes by filtering out green lines
+                                # Clear existing shapes by filtering out green and red lines
                                 current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
-                                
-                                # More robust filtering - check for green color in different ways
+
+                                # More robust filtering - check for green or red color in different ways
                                 preserved_shapes = []
                                 for shape in current_shapes:
-                                    is_green_line = False
+                                    is_colored_line = False
                                     if hasattr(shape, 'line'):
-                                        if hasattr(shape.line, 'color') and shape.line.color == 'green':
-                                            is_green_line = True
-                                        elif isinstance(shape.line, dict) and shape.line.get('color') == 'green':
-                                            is_green_line = True
-                                    elif isinstance(shape, dict) and shape.get('line', {}).get('color') == 'green':
-                                        is_green_line = True
-                                    
-                                    if not is_green_line:
+                                        if hasattr(shape.line, 'color') and shape.line.color in ['green', 'red']:
+                                            is_colored_line = True
+                                        elif isinstance(shape.line, dict) and shape.line.get('color') in ['green', 'red']:
+                                            is_colored_line = True
+                                    elif isinstance(shape, dict) and shape.get('line', {}).get('color') in ['green', 'red']:
+                                        is_colored_line = True
+
+                                    if not is_colored_line:
                                         preserved_shapes.append(shape)
-                                
-                                
+
+
                                 # Set the filtered shapes first
                                 widget.layout.shapes = preserved_shapes
                             
