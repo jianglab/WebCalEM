@@ -414,11 +414,7 @@ app_ui = ui.page_fillable(
                             )
                         ),
                         ui.nav_panel(
-                            ui.tooltip(
-                                "2D Spectrum",
-                                "Click on the spots associated with the known resolution (e.g., 2.13 for GO) to place markers. Use 'Autocorrect' to refine positions",
-                                placement="top"
-                            ),
+                            "2D Spectrum",
                             ui.div(
                                 {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
                                 # Left side: FFT display
@@ -2575,9 +2571,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             ),
             hoverinfo='skip',  # Enable hover for click events
             showlegend=False,
-            hovertemplate='<b>Distance from center:</b> %{customdata[0]:.1f} px<br>' +
-                         '<b>Tentative Apix:</b> %{customdata[1]:.4f} Å/px<br>' +
-                         '<b>For resolution:</b> ' + f'{target_resolution:.3f} Å<extra></extra>',
+            hovertemplate='<b>Apix:</b> %{customdata[1]:.4f}<extra></extra>',  # Shorter hover text
             customdata=np.column_stack([distances.flatten(), tentative_apix_array.flatten()])
         )
         fig.add_trace(scatter_trace)
@@ -2707,11 +2701,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                         print(f"Circle: center=({cx}, {cy}), radius={r:.2f}")
                         print("Could not calculate apix - resolution or radius is invalid")
                     
-                    # Create new circle shape
+                    # Create new circle shape - CYAN with sparse dotted pattern
                     new_circle = {
                         'type': 'circle',
                         'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
-                        'line': {'color': 'cyan', 'width': 2},
+                        'line': {'color': 'cyan', 'width': 1, 'dash': 'longdash'},  # More sparse than 'dot'
                         'layer': 'above',
                         'editable': True  # Make the shape editable
                     }
@@ -2749,7 +2743,58 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Attach the click callback to the scatter trace for backward compatibility
         scatter_trace.on_click(update_point)
-        
+
+        # Add hover callback for resolution ring preview
+        def update_hover_ring(trace, points, state):
+            """Update resolution ring on hover to preview where it would be placed."""
+            # Get current mode dynamically
+            current_mode_now = current_mode_storage.get()
+
+            # Only show hover ring in Resolution Ring mode
+            if current_mode_now == 'Resolution Ring' and points.point_inds:
+                # Get the hover point coordinates
+                point_idx = points.point_inds[0]
+                hover_x = scatter_trace.x[point_idx]
+                hover_y = scatter_trace.y[point_idx]
+
+                # Calculate radius directly from hover position (no local max search for speed)
+                N = fft_arr.shape[0]
+                cx = cy = N/2
+                r = ((hover_x-cx)**2 + (hover_y-cy)**2)**0.5
+
+                # Update hover ring position in place - use batch_update for atomic update
+                with fw.batch_update():
+                    # Find existing hover ring (RED dashed) by checking shapes
+                    hover_ring_idx = None
+                    for i, shape in enumerate(fw.layout.shapes):
+                        if (hasattr(shape, 'line') and
+                            hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
+                            hasattr(shape.line, 'color') and shape.line.color == 'red'):
+                            hover_ring_idx = i
+                            break
+
+                    if hover_ring_idx is not None:
+                        # Update all 4 properties atomically within batch_update
+                        hover_ring = fw.layout.shapes[hover_ring_idx]
+                        hover_ring.x0 = cx - r
+                        hover_ring.y0 = cy - r
+                        hover_ring.x1 = cx + r
+                        hover_ring.y1 = cy + r
+                    else:
+                        # Create new hover ring (first hover) - RED dashed with thin line
+                        hover_circle = {
+                            'type': 'circle',
+                            'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
+                            'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
+                            'layer': 'above',
+                            'editable': False
+                        }
+                        current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
+                        fw.layout.shapes = current_shapes + [hover_circle]
+
+        # Attach hover callback to scatter trace
+        scatter_trace.on_hover(update_hover_ring)
+
         # Also attach a general click handler to the entire figure to capture clicks anywhere
         def handle_figure_click(trace, points, selector):
             """Handle clicks anywhere on the figure, not just on scatter points."""
@@ -2778,9 +2823,35 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         # Attach general click handler to the figure widget
         fw.data[0].on_click(handle_figure_click)  # Attach to heatmap trace
-        
+
         # Store the widget for in-place overlay updates (ellipse, etc.)
         fft_widget.set(fw)
+
+        # Add initial cyan longdash circle based on current apix_slider value
+        # This shows the resolution ring corresponding to the current apix
+        # Use isolate() to avoid creating reactive dependency - we only want this circle on initial render
+        with reactive.isolate():
+            current_apix = float(input.apix_slider())
+            resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+
+        if resolution is not None and current_apix > 0:
+            N = fft_arr.shape[0]
+            cx = cy = N / 2
+            # Calculate radius: r = (apix * fft_size) / resolution
+            r = (current_apix * N) / resolution
+
+            # Create initial cyan longdash circle
+            initial_circle = {
+                'type': 'circle',
+                'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
+                'line': {'color': 'cyan', 'width': 2, 'dash': 'longdash'},
+                'layer': 'above',
+                'editable': True
+            }
+
+            # Add the initial circle to the figure
+            fw.layout.shapes = [initial_circle]
+            print(f"🔵 Added initial cyan circle at radius {r:.2f} (apix={current_apix:.4f}, resolution={resolution:.3f}Å)")
 
         # Remove direct on_relayout handler from FigureWidget (was not working)
         # Relayout events will be handled by Shiny's input.fft_with_circle_relayout event
@@ -2979,18 +3050,18 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"⏱️  TOTAL TAB SWITCH TO DATA READY: {total_duration:.3f} seconds")
             print("✅ NuFFT data calculated and cached successfully")
             
-            # Clear green vertical lines from existing power curve widget since we have new data
+            # Clear cyan vertical lines from existing power curve widget since we have new data
             existing_widget = nufft_power_widget.get()
             if existing_widget is not None:
                 try:
                     current_shapes = list(existing_widget.layout.shapes) if existing_widget.layout.shapes else []
-                    preserved_shapes = [shape for shape in current_shapes 
-                                      if not (hasattr(shape, 'line') and 
-                                             hasattr(shape.line, 'color') and 
-                                             shape.line.color == 'green')]
+                    preserved_shapes = [shape for shape in current_shapes
+                                      if not (hasattr(shape, 'line') and
+                                             hasattr(shape.line, 'color') and
+                                             shape.line.color == 'cyan')]
                     existing_widget.layout.shapes = preserved_shapes
                 except Exception as e:
-                    print(f"Note: Could not clear green lines from existing widget: {e}")
+                    print(f"Note: Could not clear cyan lines from existing widget: {e}")
             
         except Exception as e:
             print(f"❌ Error calculating NuFFT data: {e}")
@@ -4225,14 +4296,14 @@ def server(input: Inputs, output: Outputs, session: Session):
                 customdata=np.column_stack([res_range_array, tentative_apix_array])
             ))
 
-            # Add red vertical line at the highest peak
+            # Add cyan vertical line at the highest peak (matches click line color)
             if peak_info is not None:
                 fig.add_shape(
                     type="line",
                     x0=peak_info['freq'], x1=peak_info['freq'],
                     y0=0, y1=1,
                     yref="paper",
-                    line=dict(color="red", width=2, dash="solid"),
+                    line=dict(color="cyan", width=2, dash="solid"),
                     name="Peak Maximum"
                 )
                 # Add annotation for the peak
@@ -4287,7 +4358,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     ticktext=x_ticktext,
                     tickmode='array',
                     showspikes=True,  # Enable vertical spike line on hover
-                    spikecolor="rgba(0,0,0,0.5)",  # Dark gray with transparency
+                    spikecolor="red",  # Red to match 2D hover ring
                     spikesnap="cursor",  # Snap spike to cursor position
                     spikemode="across",  # Show spike across entire plot
                     spikethickness=1,  # Thickness of spike line
@@ -4300,16 +4371,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Create FigureWidget for click handling
             fw = go.FigureWidget(fig)
-            
-            # Clear any existing green vertical lines from previous power curves
-            # This ensures green lines are reset when NuFFT is recalculated
-            current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
-            preserved_shapes = [shape for shape in current_shapes 
-                              if not (hasattr(shape, 'line') and 
-                                     hasattr(shape.line, 'color') and 
-                                     shape.line.color == 'green')]
-            fw.layout.shapes = preserved_shapes
-            
+
+            # Note: We don't clear cyan lines here because we want to keep the automatic peak detection line
+            # The cyan line from find_peaks should remain visible
+            # User click lines will be added on top of this
+
             # Store widget for click event access
             nufft_power_widget.set(fw)
 
@@ -4399,21 +4465,21 @@ def server(input: Inputs, output: Outputs, session: Session):
                         # Add vertical line at click position using add_vline method
                         if x_val is not None:
                             
-                            # First clear any existing green and red lines
+                            # First clear any existing cyan and red lines
                             with widget.batch_update():
-                                # Clear existing shapes by filtering out green and red lines
+                                # Clear existing shapes by filtering out cyan and red lines
                                 current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
 
-                                # More robust filtering - check for green or red color in different ways
+                                # More robust filtering - check for cyan or red color in different ways
                                 preserved_shapes = []
                                 for shape in current_shapes:
                                     is_colored_line = False
                                     if hasattr(shape, 'line'):
-                                        if hasattr(shape.line, 'color') and shape.line.color in ['green', 'red']:
+                                        if hasattr(shape.line, 'color') and shape.line.color in ['cyan', 'red']:
                                             is_colored_line = True
-                                        elif isinstance(shape.line, dict) and shape.line.get('color') in ['green', 'red']:
+                                        elif isinstance(shape.line, dict) and shape.line.get('color') in ['cyan', 'red']:
                                             is_colored_line = True
-                                    elif isinstance(shape, dict) and shape.get('line', {}).get('color') in ['green', 'red']:
+                                    elif isinstance(shape, dict) and shape.get('line', {}).get('color') in ['cyan', 'red']:
                                         is_colored_line = True
 
                                     if not is_colored_line:
@@ -4438,21 +4504,21 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     type="line",
                                     x0=x_val, x1=x_val,
                                     y0=y_min-1, y1=y_max+1,
-                                    line=dict(color="green", width=2)
+                                    line=dict(color="cyan", width=2)  # Cyan to match 2D click ring
                                 )
-                                
+
                             except Exception as e:
-                                
+
                                 # Fallback to direct layout manipulation
                                 with widget.batch_update():
                                     current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
-                                    green_line_shape = {
+                                    cyan_line_shape = {
                                         'type': 'line',
                                         'x0': x_val, 'x1': x_val,
                                         'y0': y_min-1, 'y1': y_max+1,
-                                        'line': {'color': 'green', 'width': 2, 'dash': 'solid'}
+                                        'line': {'color': 'cyan', 'width': 2, 'dash': 'solid'}  # Cyan to match 2D
                                     }
-                                    current_shapes.append(green_line_shape)
+                                    current_shapes.append(cyan_line_shape)
                                     widget.layout.shapes = current_shapes
                         
                         # Update the apix slider directly to the tentative apix value
@@ -4485,15 +4551,15 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Add general click handler to clear green line when clicking elsewhere
         def on_general_click(trace, points, selector):
             """Clear green line when clicking outside the power curve."""
-            # If no points were clicked or this is a different trace, clear green lines
+            # If no points were clicked or this is a different trace, clear cyan lines
             if not points.point_inds or trace != widget.data[0]:
                 with widget.batch_update():
-                    # Remove all green vertical lines
+                    # Remove all cyan vertical lines
                     current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
-                    preserved_shapes = [shape for shape in current_shapes 
-                                      if not (hasattr(shape, 'line') and 
-                                             hasattr(shape.line, 'color') and 
-                                             shape.line.color == 'green')]
+                    preserved_shapes = [shape for shape in current_shapes
+                                      if not (hasattr(shape, 'line') and
+                                             hasattr(shape.line, 'color') and
+                                             shape.line.color == 'cyan')]
                     widget.layout.shapes = preserved_shapes
                     
         # Add click handler to other traces if they exist (like background)
