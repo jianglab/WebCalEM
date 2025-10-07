@@ -358,49 +358,6 @@ app_ui = ui.page_fillable(
                     ui.navset_tab(
                         ui.nav_panel(
                             ui.tooltip(
-                                "2D Spectrum",
-                                "Click on the spots associated with the known resolution (e.g., 2.13 for GO) to place markers. Use 'Autocorrect' to refine positions",
-                                placement="top"
-                            ),
-                            ui.div(
-                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
-                                # Left side: FFT display
-                                output_widget("fft_with_circle"),
-                                # ui.div(
-                                #     {"style": "width: 100%; height: 100%;"},
-                                #     output_widget("fft_with_circle")
-                                # ),
-                                # Right side: Controls arranged with fixed positioning
-                                ui.div(
-                                    {"style": "position: relative; background-color: #f8f9fa; border-radius: 8px; height: 450px; width: 250px; flex-shrink: 1; overflow: hidden;"},
-                                    # Label Type dropdown - fixed position
-                                    ui.div(
-                                        {"style": "position: absolute; top: 10px; left: 10px; right: 10px;"},
-                                        ui.input_select("label_mode", "", 
-                                            choices=["Resolution Ring", "Lattice Point"], 
-                                            selected="Resolution Ring")
-                                    ),
-                                    # FFT Range slider - fixed position
-                                    ui.div(
-                                        {"style": "position: absolute; top: 57px; left: 10px; right: 10px;"},
-                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1),
-                                    ),
-
-                                    # Buttons with fixed positions - well spaced
-                                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("tune_markers", "Autocorrect", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
-                                    # Tilt output - fixed position
-                                    ui.div(
-                                        {"style": "position: absolute; top: 340px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
-                                        ui.output_text("tilt_output"),
-                                    ),
-                                )
-                            )
-                        ),
-                        ui.nav_panel(
-                            ui.tooltip(
                                 "1D Radial Profile",
                                 "Radially averaged power spectrum analysis with NuFFT interpolation for enhanced resolution detection",
                                 placement="top"
@@ -462,6 +419,50 @@ app_ui = ui.page_fillable(
                                 )
                             )
                         ),
+                        ui.nav_panel(
+                            ui.tooltip(
+                                "2D Spectrum",
+                                "Click on the spots associated with the known resolution (e.g., 2.13 for GO) to place markers. Use 'Autocorrect' to refine positions",
+                                placement="top"
+                            ),
+                            ui.div(
+                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
+                                # Left side: FFT display
+                                output_widget("fft_with_circle"),
+                                # ui.div(
+                                #     {"style": "width: 100%; height: 100%;"},
+                                #     output_widget("fft_with_circle")
+                                # ),
+                                # Right side: Controls arranged with fixed positioning
+                                ui.div(
+                                    {"style": "position: relative; background-color: #f8f9fa; border-radius: 8px; height: 450px; width: 250px; flex-shrink: 1; overflow: hidden;"},
+                                    # Label Type dropdown - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 10px; left: 10px; right: 10px;"},
+                                        ui.input_select("label_mode", "", 
+                                            choices=["Resolution Ring", "Lattice Point"], 
+                                            selected="Resolution Ring")
+                                    ),
+                                    # FFT Range slider - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 57px; left: 10px; right: 10px;"},
+                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1),
+                                    ),
+
+                                    # Buttons with fixed positions - well spaced
+                                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("tune_markers", "Autocorrect", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
+                                    # Tilt output - fixed position
+                                    ui.div(
+                                        {"style": "position: absolute; top: 340px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
+                                        ui.output_text("tilt_output"),
+                                    ),
+                                )
+                            )
+                        ),
+
                         # ui.nav_panel(
                         #     "DFT",
                         #     ui.div(
