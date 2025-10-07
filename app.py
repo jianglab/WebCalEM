@@ -1279,20 +1279,20 @@ def server(input: Inputs, output: Outputs, session: Session):
                 return None
         
         # Fit ellipses for both point sets
+        cyan_ellipse = None
         green_ellipse = None
-        red_ellipse = None
-        
+
         if len(user_points) > 0:
-            green_ellipse = fit_and_draw_ellipse(user_points, 'green', 'ellipse_fit_green')
-        
+            cyan_ellipse = fit_and_draw_ellipse(user_points, 'cyan', 'ellipse_fit_cyan')
+
         if len(tuned_points) > 0:
-            red_ellipse = fit_and_draw_ellipse(tuned_points, 'red', 'ellipse_fit_red')
-        
+            green_ellipse = fit_and_draw_ellipse(tuned_points, 'green', 'ellipse_fit_green')
+
         # Store ellipse parameters (prioritize tuned markers for tilt calculations)
-        if red_ellipse:
-            ellipse_params_storage.set(red_ellipse['params'])
-        elif green_ellipse:
+        if green_ellipse:
             ellipse_params_storage.set(green_ellipse['params'])
+        elif cyan_ellipse:
+            ellipse_params_storage.set(cyan_ellipse['params'])
         
         # Add ellipse overlays directly to existing FFT widget (no re-render)
         fft_widget_instance = fft_widget.get()
@@ -1308,30 +1308,30 @@ def server(input: Inputs, output: Outputs, session: Session):
                 for i in reversed(ellipse_indices):
                     fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
                 
-                # Add green ellipse trace if available
+                # Add cyan ellipse trace if available (user-clicked points)
+                if cyan_ellipse:
+                    x_final, y_final = cyan_ellipse['trace_data']
+                    fft_widget_instance.add_trace(go.Scatter(
+                        x=x_final,
+                        y=y_final,
+                        mode='lines',
+                        line=dict(color='cyan', width=2),
+                        showlegend=False,
+                        hoverinfo='skip',
+                        name='ellipse_fit_cyan'
+                    ))
+
+                # Add green ellipse trace if available (auto-corrected points)
                 if green_ellipse:
                     x_final, y_final = green_ellipse['trace_data']
                     fft_widget_instance.add_trace(go.Scatter(
-                        x=x_final, 
-                        y=y_final, 
-                        mode='lines', 
-                        line=dict(color='green', width=2), 
-                        showlegend=False, 
+                        x=x_final,
+                        y=y_final,
+                        mode='lines',
+                        line=dict(color='green', width=2),
+                        showlegend=False,
                         hoverinfo='skip',
                         name='ellipse_fit_green'
-                    ))
-                
-                # Add red ellipse trace if available
-                if red_ellipse:
-                    x_final, y_final = red_ellipse['trace_data']
-                    fft_widget_instance.add_trace(go.Scatter(
-                        x=x_final, 
-                        y=y_final, 
-                        mode='lines', 
-                        line=dict(color='red', width=2), 
-                        showlegend=False, 
-                        hoverinfo='skip',
-                        name='ellipse_fit_red'
                     ))
             
             #print(f"Ellipse overlay added directly to FFT widget (no re-render)")
@@ -3113,18 +3113,18 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
         preserved_shapes = []
         for s in current_shapes:
-            # Check if this is a lattice point circle (green, width 2)
+            # Check if this is a lattice point circle (cyan, width 2)
             is_lattice_circle = (
                 hasattr(s, 'type') and s.type == 'circle' and
                 hasattr(s, 'line') and s.line and
-                hasattr(s.line, 'color') and s.line.color == 'green' and
+                hasattr(s.line, 'color') and s.line.color == 'cyan' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
-            # Check if this is a tuned marker crosshair (red line, width 2)
+            # Check if this is a tuned marker crosshair (green line, width 2)
             is_tuned_crosshair = (
                 hasattr(s, 'type') and s.type == 'line' and
                 hasattr(s, 'line') and s.line and
-                hasattr(s.line, 'color') and s.line.color == 'red' and
+                hasattr(s.line, 'color') and s.line.color == 'green' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
             # Check if this is a tuned resolution ring (red circle, width 2)
@@ -3165,36 +3165,36 @@ def server(input: Inputs, output: Outputs, session: Session):
         if current_mode == 'Lattice Point':
             for pt in lattice_points:
                 x, y = pt[0], pt[1]
-                # Add green circle for each lattice point
+                # Add cyan circle for each user-clicked lattice point
                 lattice_circle = {
                     'type': 'circle',
                     'x0': x-8, 'y0': y-8, 'x1': x+8, 'y1': y+8,
-                    'line': {'color': 'green', 'width': 2},
+                    'line': {'color': 'cyan', 'width': 2},
                     'layer': 'above',
                     'editable': False
                 }
                 preserved_shapes.append(lattice_circle)
                 
-            # Add tuned markers as red crosshairs
+            # Add tuned markers as green crosshairs (auto-corrected positions)
             for pt in tuned_markers:
                 x, y = pt[0], pt[1]
                 crosshair_size = 6  # Half-length of crosshair arms
-                
+
                 # Add horizontal line of crosshair
                 horizontal_line = {
                     'type': 'line',
                     'x0': x - crosshair_size, 'y0': y, 'x1': x + crosshair_size, 'y1': y,
-                    'line': {'color': 'red', 'width': 2},
+                    'line': {'color': 'green', 'width': 2},
                     'layer': 'above',
                     'editable': False
                 }
                 preserved_shapes.append(horizontal_line)
-                
+
                 # Add vertical line of crosshair
                 vertical_line = {
                     'type': 'line',
                     'x0': x, 'y0': y - crosshair_size, 'x1': x, 'y1': y + crosshair_size,
-                    'line': {'color': 'red', 'width': 2},
+                    'line': {'color': 'green', 'width': 2},
                     'layer': 'above',
                     'editable': False
                 }
@@ -3267,11 +3267,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         current_shapes = list(widget.layout.shapes) if widget.layout.shapes else []
         preserved_shapes = []
         for s in current_shapes:
-            # Keep lattice point circles (green, width 2)
+            # Keep lattice point circles (cyan, width 2)
             is_lattice_circle = (
                 hasattr(s, 'type') and s.type == 'circle' and
                 hasattr(s, 'line') and s.line and
-                hasattr(s.line, 'color') and s.line.color == 'green' and
+                hasattr(s.line, 'color') and s.line.color == 'cyan' and
                 hasattr(s.line, 'width') and s.line.width == 2
             )
             # Check if this is a fitted ellipse (path type with red color)
