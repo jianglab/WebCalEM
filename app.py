@@ -311,21 +311,25 @@ app_ui = ui.page_fillable(
                             )
                         ),
                         ui.div(
-                            {"style": "display: flex; justify-content: flex-start; align-items: center; gap: 10px; margin-top: 5px; width: 100%;"},
+                            {"style": "display: flex; justify-content: flex-start; align-items: flex-start; gap: 100px; width: 100%;"},
                             ui.div(
                                 {"style": "display: flex; flex-direction: column; gap: 5px;"},
-                                ui.tags.label("Nominal Pixel Size", {"for": "nominal_apix", "style": "margin-bottom: 0","width":"80px"}),
-                                ui.input_numeric("nominal_apix", None, value=1.00, min=0.01, max=10.0, step=0.01, width="80px"),
+                                ui.tags.label("Nominal Pixel Size", {"for": "nominal_apix", "style": "margin-bottom: 0","width":"120px"}),
+                                ui.input_numeric("nominal_apix", None, value=1.00, min=0.01, max=10.0, step=0.01, width="160px"),
                             ),
                             ui.div(
-                                {"style": "display: flex; align-items: flex-start; gap: 10px;"},
-                                ui.input_select("resolution_type", "Test Specimen:", 
-                                    choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"], 
-                                    selected="Graphene (2.13 Å)",
-                                    width="180px"),
-                                ui.panel_conditional(
-                                    "input.resolution_type == 'Custom'",
-                                    ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="120px")
+                                {"style": "display: flex; flex-direction: column; gap: 5px;"},
+                                ui.tags.label("Test Specimen:", {"for": "resolution_type", "style": "margin-bottom: 0"}),
+                                ui.div(
+                                    {"style": "display: flex; align-items: flex-start; gap: 10px;"},
+                                    ui.input_select("resolution_type", None,
+                                        choices=["Graphene (2.13 Å)", "Gold (2.355 Å)", "Ice (3.661 Å)", "Custom"],
+                                        selected="Graphene (2.13 Å)",
+                                        width="180px"),
+                                    ui.panel_conditional(
+                                        "input.resolution_type == 'Custom'",
+                                        ui.input_numeric("custom_resolution", "Custom Res (Å):", value=3.0, min=0.1, max=10.0, step=0.01, width="240px")
+                                    )
                                 )
                             )
                         ),
