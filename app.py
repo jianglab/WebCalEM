@@ -2114,23 +2114,23 @@ def server(input: Inputs, output: Outputs, session: Session):
             current_zoom_state.get('drawn_region') is None):
             
             print("🔧 Setting up initial pre-selected region...")
-            
-            # Set up the initial region coordinates 
+
+            # Set up the initial region coordinates
             initial_coords = {
-                'x0': 300,
-                'x1': 700,
-                'y0': 300,
-                'y1': 700
+                'x0': 250,
+                'x1': 800,
+                'y0': 250,
+                'y1': 800
             }
             box_coordinates.set(initial_coords)
-            
+
             # Update zoom state with the initial region
             new_zoom_state = current_zoom_state.copy()
             new_zoom_state['drawn_region'] = initial_coords
             new_zoom_state['is_zoomed'] = True
             image_zoom_state.set(new_zoom_state)
-            
-            print(f"✅ Pre-selected initial region: X[300,700] Y[300,700]")
+
+            print(f"✅ Pre-selected initial region: X[250,800] Y[250,800]")
 
     @reactive.Effect
     def _():
@@ -2274,7 +2274,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             )
         )
         
-        figw.add_selection(x0=300, y0=300, x1=700, y1=700,line=dict(color='blue',width=4))
+        figw.add_selection(x0=250, y0=250, x1=800, y1=800, line=dict(color='blue',width=4))
         # Hide axes but keep them functional for events
         figw.update_xaxes(
             visible=False,
@@ -4299,7 +4299,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             fig.update_layout(
                 title=dict(
-                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For the peak is multiplet, select the leftmost subpeak.</sub>',
+                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For multiplet peak, select the leftmost subpeak.</sub>',
                     font=dict(size=16)
                 ),
                 xaxis_title='Spatial Resolution (1/Å)',
