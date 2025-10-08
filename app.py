@@ -2904,16 +2904,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq, input.nufft_display_range, nufft_calculation_requested)
     def calculate_nufft_when_requested():
         """Calculate NuFFT data ONLY when sampling parameters change or explicitly requested."""
-        import traceback as tb
-        print(f"\n{'='*80}")
-        print(f"🔔 calculate_nufft_when_requested CALLED - requested={nufft_calculation_requested.get()}")
-        print(f"🔔 Call stack (last 3 frames):")
-        for line in tb.format_stack()[-4:-1]:
-            print(f"   {line.strip()}")
-
         if not nufft_calculation_requested.get():
-            print("   ❌ NuFFT calculation not requested, skipping")
-            print(f"{'='*80}\n")
             return
 
         # Get current slider values
@@ -3023,10 +3014,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             # Cache the NuFFT power curve data
-            print(f"\n{'='*80}")
-            print(f"💾 STEP 5b: SETTING cached_nufft_power_data with apix={current_apix}")
-            print(f"     This will trigger nufft_power_curve render!")
-            print(f"{'='*80}\n")
             cached_nufft_power_data.set({
                 'pwr_curve': pwr_curve,
                 'pwr2d_raw': pwr2d_raw,
@@ -3674,8 +3661,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         from shiny import req
         import time
         plot_start = time.time()
-        print(f"🎨 HEATMAP PLOT START: {plot_start:.3f}")
-        
+
         # Check if we should show focused heatmap
         show_focused = nufft_show_focused_heatmap.get()
         clicked_freq = nufft_clicked_frequency.get()
@@ -3720,12 +3706,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             return go.FigureWidget(fig)
         
         # Focused mode: Generate heatmap around clicked frequency
-        print(f"🎯 FOCUSED MODE: Generating heatmap around frequency {clicked_freq:.6f} 1/Å")
-        
         # Require NuFFT calculation state to exist
         calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
-        
+
         # Request NuFFT calculation if not already done
         nufft_calculation_requested.set(True)
         
@@ -3923,7 +3907,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Create detailed hover text for all pixels in focused view (it's small now!)
             # Calculate tentative apix for each frequency point (same formula as power curve)
-            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
+            # Use current_apix from cached data instead of reading input.nominal_apix()
+            # to avoid creating unnecessary reactive dependencies that cause re-renders
+            nominal_apix = current_apix  # Already stored in cached_heatmap_data['apix']
             target_spatial_freq = 1.0 / target_resolution
             tentative_apix_array = nominal_apix * (focused_freq_range / target_spatial_freq)
 
@@ -4148,30 +4134,17 @@ def server(input: Inputs, output: Outputs, session: Session):
     def nufft_power_curve():
         from shiny import req
         import time
-        import traceback as tb
 
         render_count["count"] += 1
         power_plot_start = time.time()
 
-        print(f"\n{'='*80}")
-        print(f"📈 POWER CURVE RENDER #{render_count['count']} CALLED at {power_plot_start:.3f}")
-        print(f"📈 Call stack (last 3 frames):")
-        for line in tb.format_stack()[-4:-1]:
-            print(f"   {line.strip()}")
-
         # Get cached data - this is the ONLY reactive dependency we need for rendering
         # Don't read nufft_calculation_state here as it causes extra re-renders
         cached_power_data = cached_nufft_power_data.get()
-        print(f"📈 cached_power_data exists: {cached_power_data is not None}")
 
         # Require data to exist - this will prevent rendering until data is available
         if cached_power_data is None:
-            print(f"📈 RENDER #{render_count['count']}: No data yet, returning empty widget")
-            print(f"{'='*80}\n")
             req(False)  # This will stop execution here
-        
-        print("📈 Using NuFFT power curve data")
-        print(f"   📊 CACHED DATA KEYS: {list(cached_power_data.keys())}")
 
         pwr_curve = cached_power_data['pwr_curve']
         pwr = cached_power_data['pwr2d_raw']
@@ -4180,12 +4153,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         res_low = cached_power_data['res_low']
         res_high = cached_power_data['res_high']
         current_apix = cached_power_data['apix']
-        print(f"   📊 APIX from cached data: {current_apix}")
-        print(f"   📊 Resolution range: {res_low:.3f} - {res_high:.3f} Å")
-        print(f"   📊 pwr_curve shape: {pwr_curve.shape}")
-        print(f"   📊 pwr_curve min/max/mean: {pwr_curve.min():.6f} / {pwr_curve.max():.6f} / {pwr_curve.mean():.6f}")
-        print(f"   📊 pwr_curve first 10 values: {pwr_curve[:10]}")
-        print(f"   📊 pwr_curve last 10 values: {pwr_curve[-10:]}")
 
         # Get values from cached data to avoid triggering re-renders when inputs change
         # The cached data already has the correct target_resolution calculated during NuFFT computation
@@ -4196,13 +4163,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         # Read log_y input
         log_y = input.nufft_log_y()
-        print(f"   📊 Using cached values: target_resolution={target_resolution:.3f}Å, log_y={log_y}")
-        print(f"   📊 Reactive dependencies: checking what triggered this render...")
         apix_source = f"Nominal Apix: {current_apix:.3f}"
-        
-        print(f"   pwr_curve shape: {pwr_curve.shape if hasattr(pwr_curve, 'shape') else type(pwr_curve)}")
-        print(f"   pwr shape: {pwr.shape if hasattr(pwr, 'shape') else type(pwr)}")
-        print(f"   r_samples: {r_samples}, theta_samples: {theta_samples}")
         
         try:
             
@@ -4243,7 +4204,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Calculate tentative apix for each spatial frequency point
             # Formula: tentative_apix = nominal_apix * (spatial_freq / target_spatial_freq)
             # This shows what the apix would be if the highest peak were at the target resolution
-            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
+            # Use current_apix from cached data instead of reading input.nominal_apix()
+            # to avoid creating unnecessary reactive dependencies that cause re-renders
+            nominal_apix = current_apix  # Already stored in cached_power_data['apix']
             target_spatial_freq = 1.0 / target_resolution
             tentative_apix_array = nominal_apix * (spatial_freq_array / target_spatial_freq)
             
@@ -4254,7 +4217,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             # prominence ensures we only get significant peaks
             peaks, properties = find_peaks(y_data, prominence=0.5)
 
-            print(f"   🔍 FOUND {len(peaks)} LOCAL MAXIMA in power curve")
             if len(peaks) > 0:
                 # Get the highest peak (maximum intensity)
                 peak_intensities = y_data[peaks]
@@ -4268,10 +4230,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # then: actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
                 actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
 
-                print(f"   🎯 HIGHEST PEAK at freq={peak_freq:.4f} (1/Å), resolution={peak_res:.3f}Å")
-                print(f"   📏 CALCULATED APIX from peak: {actual_apix:.4f} Å/px")
-                print(f"   📊 Peak intensity: {peak_intensity:.4f}")
-
                 # Store for later use
                 peak_info = {
                     'freq': peak_freq,
@@ -4280,7 +4238,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'apix': actual_apix
                 }
             else:
-                print(f"   ⚠️  NO SIGNIFICANT PEAKS FOUND")
                 peak_info = None
 
             # Create the plot with hoverable vertical dash line
@@ -4382,22 +4339,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Update apix slider and exact value with the calculated apix from the peak
             if peak_info is not None:
                 calculated_apix = peak_info['apix']
-                print(f"   📝 UPDATING apix_slider and apix_exact_str to {calculated_apix:.4f}")
                 ui.update_slider("apix_slider", value=calculated_apix)
                 ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}")
-
-            power_plot_end = time.time()
-            power_plot_duration = power_plot_end - power_plot_start
-            print(f"🏁 POWER CURVE PLOT COMPLETED in {power_plot_duration:.3f} seconds")
-            print(f"🎯 TOTAL END-TO-END TAB SWITCH TO PLOTS VISIBLE: Check previous timing logs")
-
-            # Print what's actually being plotted
-            if len(fw.data) > 0:
-                plotted_y = fw.data[0].y
-                print(f"   📈 ACTUALLY PLOTTING: {len(plotted_y)} points")
-                print(f"   📈 Y-data min/max/mean: {np.min(plotted_y):.6f} / {np.max(plotted_y):.6f} / {np.mean(plotted_y):.6f}")
-                print(f"   📈 Y-data first 10: {plotted_y[:10]}")
-                print(f"   📈 Y-data last 10: {plotted_y[-10:]}")
 
             return fw
             
@@ -4437,7 +4380,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         widget = nufft_power_widget.get()
         if widget is None:
             return
-        
+
         # Get the current data to enable click info extraction
         calc_state = nufft_calculation_state.get()
         if calc_state['region'] is None:
@@ -4445,14 +4388,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         def on_click(trace, points, selector):
             """Handle click events on NuFFT power curve."""
-            import time
-            click_start = time.time()
-            print(f"🖱️  CLICK EVENT START: {click_start:.3f}")
             if points.point_inds:
                 try:
                     # Get clicked point information
                     point_idx = points.point_inds[0]
-                    
+
                     # Get the tentative apix from the hover data (customdata)
                     tentative_apix = None
                     if hasattr(trace, 'customdata') and trace.customdata is not None and point_idx < len(trace.customdata):
@@ -4524,23 +4464,16 @@ def server(input: Inputs, output: Outputs, session: Session):
                         # Update the apix slider directly to the tentative apix value
                         ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
                         ui.update_slider("apix_slider", value=tentative_apix)
-                        
+
                         # Enable focused heatmap around clicked frequency
                         if x_val is not None:
                             nufft_clicked_frequency.set(x_val)
                             nufft_show_focused_heatmap.set(True)
-                            print(f"🎯 FOCUSED HEATMAP enabled around frequency {x_val:.6f} 1/Å")
-                        
-                        click_end = time.time()
-                        click_duration = click_end - click_start
-                        print(f"🎯 CLICK EVENT COMPLETED in {click_duration:.3f} seconds")
                         
                     # If tentative_apix is None, do nothing
-                        
+
                 except Exception as e:
-                    click_end = time.time()
-                    click_duration = click_end - click_start
-                    print(f"❌ CLICK EVENT FAILED after {click_duration:.3f} seconds: {e}")
+                    print(f"❌ CLICK EVENT FAILED: {e}")
                     import traceback
                     traceback.print_exc()
         
