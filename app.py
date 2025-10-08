@@ -352,7 +352,7 @@ app_ui = ui.page_fillable(
             ),
             # Right column: FFT and Result cards stacked vertically
             ui.div(
-                {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
+                {"style": "display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0;"},
                 ui.card(
                     ui.card_header("FFT Analysis"),
                     ui.navset_tab(
@@ -397,6 +397,10 @@ app_ui = ui.page_fillable(
                                     #         ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
                                     #     ),
                                     # ),
+                                    ui.div(
+                                        {"style": "margin-bottom: 5px;"},
+                                        ui.input_slider("precision_decimals", "Precision Decimals", min=0, max=6, value=4, step=1),
+                                    ),
                                     ui.div(
                                         {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
@@ -499,7 +503,7 @@ app_ui = ui.page_fillable(
                         # )
                     ),
                     full_screen=True,
-                    style="flex: 1; min-height: 400px;"
+                    style="flex: 1 1 auto; min-height: 400px;"
                 ),
                 # Result card (bottom)
                 ui.card(
@@ -510,7 +514,7 @@ app_ui = ui.page_fillable(
                         #ui.div(
                         #{"style": "flex: 5; display: flex; align-items: flex-end; gap: 5px;"},
                         ui.tags.label("Pixel Size (Å/px):", {"for": "apix_slider", "style": "margin: 0; white-space: nowrap;"}),
-                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%"),
+                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.000001, width="100%"),
                             # ui.div(
                             #     {"style": "flex: 1; display: flex; align-items: flex-end;"},
                             #     ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%")
@@ -528,10 +532,11 @@ app_ui = ui.page_fillable(
                         ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%;max-width: 200px; display: flex; align-items: center; justify-content: center;"),
 
                     ),
-                    style="flex: 1 2 2 1 2;min-height: 100px;"
+                    style="min-height: 100px;"
                 )
             ),
             col_widths=[5, 7],
+            heights_equal="row",
         )
     ),
     # Secondary analysis section - scrollable below
@@ -949,6 +954,12 @@ def server(input: Inputs, output: Outputs, session: Session):
     #         ui.update_action_button("estimate_tilt", disabled=not has_ellipse, session=session)
 
     # --- All events update apix_master ---
+    # Helper function to format apix values with current precision
+    def format_apix(value):
+        """Format apix value with the current precision setting."""
+        precision = int(input.precision_decimals())
+        return f"{value:.{precision}f}"
+
     @reactive.Effect
     @reactive.event(input.apix_slider)
     def _():
@@ -956,9 +967,37 @@ def server(input: Inputs, output: Outputs, session: Session):
         if click_flag:
             # Skip updates when apix is being set from NuFFT click
             return
-        apix_master.set(input.apix_slider())
+
+        slider_val = input.apix_slider()
+        apix_master.set(slider_val)
+
+        # Update exact text to match slider value with current precision
+        ui.update_text("apix_exact_str", value=format_apix(slider_val), session=session)
         # Clear 1D plot clicked position when apix changes from slider
         #plot_1d_click_pos.set({'x': None, 'y': None})
+
+    @reactive.Effect
+    @reactive.event(input.precision_decimals)
+    def _():
+        """Update apix_slider step value when precision changes."""
+        precision = int(input.precision_decimals())
+        step_value = 10 ** (-precision)
+
+        # Set flag to prevent triggering other effects during precision change
+        apix_updating_from_nufft_click.set(True)
+
+        # Update the slider with new step value and reformat current value
+        current_val = input.apix_slider()
+        ui.update_slider("apix_slider", value=current_val, step=step_value, session=session)
+        ui.update_text("apix_exact_str", value=format_apix(current_val), session=session)
+
+        # Clear flag after update
+        import threading
+        def clear_flag():
+            import time
+            time.sleep(0.1)
+            apix_updating_from_nufft_click.set(False)
+        threading.Thread(target=clear_flag, daemon=True).start()
 
     @reactive.Effect
     @reactive.event(input.apix_set_btn)
@@ -972,7 +1011,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     return
                 #apix_master.set(val)
                 ui.update_slider("apix_slider", value=val, session=session)
-                ui.update_text("apix_exact_str", value=str(round(val, 4)), session=session)
+                ui.update_text("apix_exact_str", value=format_apix(val), session=session)
                 # Clear 1D plot clicked position when apix changes from Set button
                 #plot_1d_click_pos.set({'x': None, 'y': None})
         except Exception:
@@ -1517,7 +1556,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
                 # Update the apix slider with the refined value
                 ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
+                ui.update_text("apix_exact_str", value=format_apix(calculated_apix), session=session)
             
             print(f"Autocorrect completed using local maximum search.")
                 
@@ -1648,7 +1687,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         if primary_tilt and primary_tilt[3] is not None:
             untilted_apix = primary_tilt[3]
             ui.update_slider("apix_slider", value=untilted_apix, session=session)
-            ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
+            ui.update_text("apix_exact_str", value=format_apix(untilted_apix), session=session)
             print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
         
         print(f"Tilt information stored in separate storages")
@@ -1847,7 +1886,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             nominal_apix_ui_synced.set(False)  # Mark as not yet synced
             ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
-            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
+            ui.update_text("apix_exact_str", value=format_apix(nominal_value), session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
             print(f"Set apix slider and exact value to match nominal apix: {nominal_value:.3f}")
             
@@ -1983,7 +2022,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             nominal_value = extract_nominal(original_filename)
             ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
-            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
+            ui.update_text("apix_exact_str", value=format_apix(nominal_value), session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
             
             # Set the image data (same as upload handler)
@@ -2696,7 +2735,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         
                         # Update the apix slider with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
+                        ui.update_text("apix_exact_str", value=format_apix(calculated_apix), session=session)
                     else:
                         print(f"Circle: center=({cx}, {cy}), radius={r:.2f}")
                         print("Could not calculate apix - resolution or radius is invalid")
@@ -3675,9 +3714,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 text="<b>📊 Interactive Heatmap</b><br><br>" +
                      "👆 Click on the power curve above<br>" +
                      "to generate a focused heatmap<br>" +
-                     "around your selected frequency<br><br>" +
-                     "🎯 This saves time by showing<br>" +
-                     "only the relevant data slice!",
+                     "around your selected frequency<br><br>", #+
+                    #  "🎯 This saves time by showing<br>" +
+                    #  "only the relevant data slice!",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5, xanchor='center', yanchor='middle',
                 showarrow=False,
@@ -3687,7 +3726,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 borderwidth=1
             )
             fig.update_layout(
-                title="Click Power Curve to Generate Focused Heatmap",
+                #title="Click Power Curve to Generate Focused Heatmap",
                 height=300,
                 width=650,
                 margin=dict(l=80, r=20, t=60, b=40),
@@ -4340,7 +4379,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             if peak_info is not None:
                 calculated_apix = peak_info['apix']
                 ui.update_slider("apix_slider", value=calculated_apix)
-                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}")
+                ui.update_text("apix_exact_str", value=format_apix(calculated_apix))
 
             return fw
             
@@ -4462,7 +4501,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     widget.layout.shapes = current_shapes
                         
                         # Update the apix slider directly to the tentative apix value
-                        ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
+                        ui.update_text("apix_exact_str", value=format_apix(tentative_apix))
                         ui.update_slider("apix_slider", value=tentative_apix)
 
                         # Enable focused heatmap around clicked frequency
@@ -4616,7 +4655,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                             # Set flag to prevent NuFFT recalculation during UI update
                             apix_updating_from_nufft_click.set(True)
 
-                            ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
+                            ui.update_text("apix_exact_str", value=format_apix(tentative_apix))
                             ui.update_slider("apix_slider", value=tentative_apix)
 
                             # Clear flag after a short delay
@@ -5252,7 +5291,26 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Reset index after deletion
             updated_data = updated_data.reset_index(drop=True)
-            
+
+            # Recalculate statistics with current precision
+            precision = int(input.precision_decimals())
+            def recalc_stats(df):
+                if len(df) == 0:
+                    return df
+                df_copy = df.copy()
+                df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Pixel Size'], errors='coerce')
+                for nominal in df_copy['Nominal'].unique():
+                    mask = df_copy['Nominal'] == nominal
+                    apix_values = df_copy.loc[mask, 'Apix_numeric'].dropna()
+                    if len(apix_values) > 0:
+                        mean_val = apix_values.mean()
+                        std_val = apix_values.std() if len(apix_values) > 1 else 0.0
+                        stats_str = f"{mean_val:.{precision}f} ± {std_val:.{precision}f}"
+                        df_copy.loc[mask, 'Average Pixel Size'] = stats_str
+                return df_copy.drop('Apix_numeric', axis=1)
+
+            updated_data = recalc_stats(updated_data)
+
             # Update the reactive value
             region_table_data.set(updated_data)
             
@@ -5875,16 +5933,20 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Use current apix value (allows user to adjust apix after FFT calculation)
             apix_value = get_apix()
-            
+
             # Get nominal value from textbox
             nominal_value = float(input.nominal_apix())
-            
+
+            # Format apix value with current precision setting
+            precision = int(input.precision_decimals())
+            apix_formatted = f"{apix_value:.{precision}f}"
+
             # Create new row
             new_row = pd.DataFrame({
                 'Filename': [filename],
                 'Region Size': [region_size],
                 'Region Location': [region_location],
-                'Pixel Size': [f"{apix_value:.4f}"],
+                'Pixel Size': [apix_formatted],
                 'Nominal': [nominal_value],
                 'Average Pixel Size': ['']  # Will be calculated after adding
             })
@@ -5899,6 +5961,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Convert Pixel Size column to float for calculations
                 df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Pixel Size'], errors='coerce')
 
+                # Get current precision for formatting statistics
+                precision = int(input.precision_decimals())
+
                 # Group by nominal value and calculate stats
                 for nominal in df_copy['Nominal'].unique():
                     mask = df_copy['Nominal'] == nominal
@@ -5907,7 +5972,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     if len(apix_values) > 0:
                         mean_val = apix_values.mean()
                         std_val = apix_values.std() if len(apix_values) > 1 else 0.0
-                        stats_str = f"{mean_val:.4f} ± {std_val:.4f}"
+                        stats_str = f"{mean_val:.{precision}f} ± {std_val:.{precision}f}"
                         df_copy.loc[mask, 'Average Pixel Size'] = stats_str
 
                 return df_copy.drop('Apix_numeric', axis=1)
