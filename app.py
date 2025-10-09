@@ -955,9 +955,16 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     # --- All events update apix_master ---
     # Helper function to format apix values with current precision
-    def format_apix(value):
-        """Format apix value with the current precision setting."""
-        precision = int(input.precision_decimals())
+    def format_apix(value, precision=None):
+        """Format apix value with the specified or current precision setting.
+
+        Args:
+            value: The apix value to format
+            precision: Number of decimal places. If None, reads from precision slider.
+                      Pass explicit value to avoid creating reactive dependency in render functions.
+        """
+        if precision is None:
+            precision = int(input.precision_decimals())
         return f"{value:.{precision}f}"
 
     @reactive.Effect
@@ -979,25 +986,18 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.Effect
     @reactive.event(input.precision_decimals)
     def _():
-        """Update apix_slider step value when precision changes."""
+        """Update display format when precision changes."""
         precision = int(input.precision_decimals())
-        step_value = 10 ** (-precision)
 
-        # Set flag to prevent triggering other effects during precision change
-        apix_updating_from_nufft_click.set(True)
+        # Use isolate to read values without creating reactive dependencies
+        with reactive.isolate():
+            current_val = apix_master.get()
 
-        # Update the slider with new step value and reformat current value
-        current_val = input.apix_slider()
-        ui.update_slider("apix_slider", value=current_val, step=step_value, session=session)
-        ui.update_text("apix_exact_str", value=format_apix(current_val), session=session)
+        # Format the value with new precision
+        formatted_value = f"{current_val:.{precision}f}"
 
-        # Clear flag after update
-        import threading
-        def clear_flag():
-            import time
-            time.sleep(0.1)
-            apix_updating_from_nufft_click.set(False)
-        threading.Thread(target=clear_flag, daemon=True).start()
+        # Only update the exact text field - don't touch apix_slider or apix_master
+        ui.update_text("apix_exact_str", value=formatted_value, session=session)
 
     @reactive.Effect
     @reactive.event(input.apix_set_btn)
@@ -4375,11 +4375,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Store widget for click event access
             nufft_power_widget.set(fw)
 
-            # Update apix slider and exact value with the calculated apix from the peak
+            # Update apix slider with the calculated apix from the peak
+            # Note: Don't call format_apix() here to avoid creating reactive dependency on precision_decimals
+            # The apix_slider effect will update apix_exact_str with correct precision automatically
             if peak_info is not None:
                 calculated_apix = peak_info['apix']
                 ui.update_slider("apix_slider", value=calculated_apix)
-                ui.update_text("apix_exact_str", value=format_apix(calculated_apix))
 
             return fw
             
