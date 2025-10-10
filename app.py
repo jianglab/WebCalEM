@@ -780,7 +780,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Smart heatmap control: track clicked frequency for focused heatmap rendering
     nufft_clicked_frequency = reactive.Value(None)
     nufft_show_focused_heatmap = reactive.Value(False)
-    
+    nufft_heatmap_auto_initialized = reactive.Value(False)  # Track if heatmap was auto-initialized
+    nufft_auto_detected_peak = reactive.Value(None)  # Store auto-detected peak info for initialization
+
     # Flag to prevent NuFFT recalculation when apix is updated from power curve clicks
     apix_updating_from_nufft_click = reactive.Value(False)
     
@@ -966,6 +968,82 @@ def server(input: Inputs, output: Outputs, session: Session):
         if precision is None:
             precision = int(input.precision_decimals())
         return f"{value:.{precision}f}"
+
+    def calculate_pixel_size_uncertainty(nominal_apix, image_size, selected_resolution, pixel_uncertainty=0.5):
+        """Calculate pixel size measurement uncertainty based on pixel-level sampling.
+
+        When calibrating using FFT peaks, the peak position has an uncertainty of ±0.5 pixels
+        due to pixel-level sampling. This uncertainty propagates to the calculated pixel size.
+
+        Physics:
+        - Peak position in FFT: r (pixels from center)
+        - Pixel size formula: apix = selected_resolution / (2 * r / image_size)
+                            = selected_resolution * image_size / (2 * r)
+        - For nominal_apix, the peak ratio is: r/image_size = selected_resolution / (2 * nominal_apix)
+        - Therefore: r = image_size * selected_resolution / (2 * nominal_apix)
+
+        Uncertainty propagation:
+        - dr = ±0.5 pixels (sampling uncertainty)
+        - d(apix)/dr = -selected_resolution * image_size / (2 * r²)
+        - Δapix = |d(apix)/dr| * dr
+
+        Args:
+            nominal_apix: The nominal pixel size in Å/pixel (e.g., 0.97, 1.315)
+            image_size: Size of the FFT image region in pixels (e.g., 512, 1024)
+            selected_resolution: The calibration resolution in Å (e.g., 2.13)
+            pixel_uncertainty: Position uncertainty in pixels (default: 0.5)
+
+        Returns:
+            dict with keys:
+                'uncertainty_apix': Absolute uncertainty in Å/pixel
+                'uncertainty_percent': Relative uncertainty as percentage
+                'precision_decimals': Recommended decimal places for display
+                'peak_radius': Calculated peak radius in pixels
+
+        Example:
+            >>> result = calculate_pixel_size_uncertainty(
+            ...     nominal_apix=1.315,
+            ...     image_size=512,
+            ...     selected_resolution=2.13
+            ... )
+            >>> # For nominal_apix=1.315: uncertainty ≈ 0.0034 Å/px, precision=3
+            >>> # For nominal_apix=0.97: uncertainty ≈ 0.0007 Å/px, precision=4
+        """
+        # Calculate the peak radius for this nominal pixel size
+        # From: apix = selected_resolution / (2 * r / image_size)
+        # Solving for r: r = selected_resolution * image_size / (2 * nominal_apix)
+        peak_radius = (selected_resolution * image_size) / (2.0 * nominal_apix)
+
+        # Calculate uncertainty using error propagation
+        # d(apix)/dr = -selected_resolution * image_size / (2 * r²)
+        # Δapix = |d(apix)/dr| * Δr
+        d_apix_dr = selected_resolution * image_size / (2.0 * peak_radius**2)
+        uncertainty_apix = abs(d_apix_dr * pixel_uncertainty)
+
+        # Calculate relative uncertainty as percentage
+        uncertainty_percent = (uncertainty_apix / nominal_apix) * 100.0
+
+        # Determine precision decimals based on uncertainty magnitude
+        # If uncertainty is > 10^-1 (0.1), show 1 decimal
+        # If uncertainty is 10^-2 to 10^-1 (0.01-0.1), show 2 decimals
+        # If uncertainty is 10^-3 to 10^-2 (0.001-0.01), show 3 decimals, etc.
+        if uncertainty_apix >= 0.1:
+            precision_decimals = 1
+        elif uncertainty_apix >= 0.01:
+            precision_decimals = 2
+        elif uncertainty_apix >= 0.001:
+            precision_decimals = 3
+        elif uncertainty_apix >= 0.0001:
+            precision_decimals = 4
+        else:
+            precision_decimals = 5
+
+        return {
+            'uncertainty_apix': uncertainty_apix,
+            'uncertainty_percent': uncertainty_percent,
+            'precision_decimals': precision_decimals,
+            'peak_radius': peak_radius
+        }
 
     @reactive.Effect
     @reactive.event(input.apix_slider)
@@ -1790,6 +1868,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             cached_nufft_heatmap_data.set(None)
             cached_nufft_power_data.set(None)
             nufft_calculation_requested.set(False)  # Reset calculation request
+            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
+            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             fft_widget.set(None)  # Clear FFT widget
             base_fft_trigger.set(0)  # Also reset base trigger for clean state
             return
@@ -1839,10 +1919,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             cached_nufft_heatmap_data.set(None)
             cached_nufft_power_data.set(None)
             nufft_calculation_requested.set(False)  # Reset calculation request
+            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
+            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             fft_widget.set(None)  # Clear FFT widget
             base_fft_trigger.set(0)  # Also reset base trigger for clean state
 
-            
+
             # Clear all overlay storage when upload fails
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
@@ -1969,6 +2051,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_filename.set(None)
             original_image_data.set(None)
             binned_image_data.set(None)
+            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
+            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
 
     # Helper function for URL downloading logic
     def download_image_from_url(url):
@@ -2116,6 +2200,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_filename.set(None)
             original_image_data.set(None)
             binned_image_data.set(None)
+            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
+            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             return False
 
     @reactive.Effect
@@ -2784,6 +2870,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         scatter_trace.on_click(update_point)
 
         # Add hover callback for resolution ring preview
+        # Cache the hover ring index for faster updates
+        hover_ring_cache = {'idx': None, 'N': fft_arr.shape[0], 'cx': fft_arr.shape[0]/2, 'cy': fft_arr.shape[0]/2}
+
         def update_hover_ring(trace, points, state):
             """Update resolution ring on hover to preview where it would be placed."""
             # Get current mode dynamically
@@ -2796,40 +2885,54 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hover_x = scatter_trace.x[point_idx]
                 hover_y = scatter_trace.y[point_idx]
 
-                # Calculate radius directly from hover position (no local max search for speed)
-                N = fft_arr.shape[0]
-                cx = cy = N/2
+                # Calculate radius directly from hover position (use cached center coordinates)
+                cx = hover_ring_cache['cx']
+                cy = hover_ring_cache['cy']
                 r = ((hover_x-cx)**2 + (hover_y-cy)**2)**0.5
 
-                # Update hover ring position in place - use batch_update for atomic update
-                with fw.batch_update():
-                    # Find existing hover ring (RED dashed) by checking shapes
-                    hover_ring_idx = None
-                    for i, shape in enumerate(fw.layout.shapes):
-                        if (hasattr(shape, 'line') and
-                            hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
-                            hasattr(shape.line, 'color') and shape.line.color == 'red'):
-                            hover_ring_idx = i
-                            break
+                # Fast path: Try to use cached index first
+                hover_ring_idx = hover_ring_cache['idx']
 
-                    if hover_ring_idx is not None:
-                        # Update all 4 properties atomically within batch_update
-                        hover_ring = fw.layout.shapes[hover_ring_idx]
-                        hover_ring.x0 = cx - r
-                        hover_ring.y0 = cy - r
-                        hover_ring.x1 = cx + r
-                        hover_ring.y1 = cy + r
-                    else:
-                        # Create new hover ring (first hover) - RED dashed with thin line
-                        hover_circle = {
-                            'type': 'circle',
-                            'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
-                            'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
-                            'layer': 'above',
-                            'editable': False
-                        }
-                        current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
-                        fw.layout.shapes = current_shapes + [hover_circle]
+                # Validate cached index (only if we have one)
+                if hover_ring_idx is not None and hover_ring_idx < len(fw.layout.shapes):
+                    shape = fw.layout.shapes[hover_ring_idx]
+                    # Quick validation: check if it's still our hover ring
+                    if (hasattr(shape, 'line') and
+                        hasattr(shape.line, 'color') and shape.line.color == 'red' and
+                        hasattr(shape.line, 'dash') and shape.line.dash == 'dash'):
+                        # Fast update using relayout (much faster than batch_update)
+                        fw.layout.shapes[hover_ring_idx].update(
+                            x0=cx-r, y0=cy-r, x1=cx+r, y1=cy+r
+                        )
+                        return  # Early return for fast path
+
+                # Slow path: Need to find or create the hover ring
+                hover_ring_idx = None
+                for i, shape in enumerate(fw.layout.shapes):
+                    if (hasattr(shape, 'line') and
+                        hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
+                        hasattr(shape.line, 'color') and shape.line.color == 'red'):
+                        hover_ring_idx = i
+                        hover_ring_cache['idx'] = i  # Cache for next time
+                        break
+
+                if hover_ring_idx is not None:
+                    # Update using relayout (faster than batch_update)
+                    fw.layout.shapes[hover_ring_idx].update(
+                        x0=cx-r, y0=cy-r, x1=cx+r, y1=cy+r
+                    )
+                else:
+                    # Create new hover ring (first hover) - RED dashed with thin line
+                    hover_circle = {
+                        'type': 'circle',
+                        'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
+                        'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
+                        'layer': 'above',
+                        'editable': False
+                    }
+                    current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
+                    fw.layout.shapes = current_shapes + [hover_circle]
+                    hover_ring_cache['idx'] = len(current_shapes)  # Cache the new index
 
         # Attach hover callback to scatter trace
         scatter_trace.on_hover(update_hover_ring)
@@ -3695,7 +3798,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render_widget
-    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq)
+    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, cached_nufft_heatmap_data)
     def nufft_heatmap():
         from shiny import req
         import time
@@ -3704,11 +3807,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Check if we should show focused heatmap
         show_focused = nufft_show_focused_heatmap.get()
         clicked_freq = nufft_clicked_frequency.get()
-        
+
         if not show_focused:
             # Initial state: Show placeholder message encouraging user to click
+            # Only re-render on mode changes, not on slider changes
             print("🎯 INITIAL STATE: Showing click-to-generate-heatmap placeholder")
-            
+
             fig = go.Figure()
             fig.add_annotation(
                 text="<b>📊 Interactive Heatmap</b><br><br>" +
@@ -3735,7 +3839,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 yaxis=dict(showgrid=False, showticklabels=False, showline=False, zeroline=False),
                 plot_bgcolor="rgba(0,0,0,0)"
             )
-            
+
             plot_end = time.time()
             print(f"🏁 PLACEHOLDER HEATMAP completed in {plot_end - plot_start:.3f} seconds")
 
@@ -4382,6 +4486,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 calculated_apix = peak_info['apix']
                 ui.update_slider("apix_slider", value=calculated_apix)
 
+                # Store auto-detected peak info (a separate Effect will handle initialization)
+                # This avoids setting reactive values inside render function which causes Shiny errors
+                nufft_auto_detected_peak.set(peak_info)
+
             return fw
             
         except Exception as e:
@@ -4413,6 +4521,19 @@ def server(input: Inputs, output: Outputs, session: Session):
                 
         # Note: Heatmap will update automatically through its render function
         # which uses shared_x_range.get() in its layout
+
+    @reactive.Effect
+    @reactive.event(nufft_auto_detected_peak)
+    def auto_initialize_heatmap():
+        """Auto-initialize heatmap with detected peak (separate from render to avoid reactivity errors)."""
+        peak_info = nufft_auto_detected_peak.get()
+
+        # Only auto-initialize once on first peak detection
+        if peak_info is not None and not nufft_heatmap_auto_initialized.get():
+            nufft_clicked_frequency.set(peak_info['freq'])
+            nufft_show_focused_heatmap.set(True)
+            nufft_heatmap_auto_initialized.set(True)
+            print(f"🎯 Auto-initializing heatmap at detected peak: {peak_info['freq']:.6f} 1/Å")
 
     @reactive.Effect
     def setup_nufft_power_click_handler():
