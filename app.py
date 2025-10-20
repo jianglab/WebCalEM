@@ -352,7 +352,7 @@ app_ui = ui.page_fillable(
             ),
             # Right column: FFT and Result cards stacked vertically
             ui.div(
-                {"style": "display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0;"},
+                {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
                 ui.card(
                     ui.card_header("FFT Analysis"),
                     ui.navset_tab(
@@ -397,10 +397,6 @@ app_ui = ui.page_fillable(
                                     #         ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
                                     #     ),
                                     # ),
-                                    ui.div(
-                                        {"style": "margin-bottom: 5px;"},
-                                        ui.input_slider("precision_decimals", "Precision Decimals", min=0, max=6, value=4, step=1),
-                                    ),
                                     ui.div(
                                         {"style": "margin-bottom: 5px;"},
                                         ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
@@ -503,7 +499,7 @@ app_ui = ui.page_fillable(
                         # )
                     ),
                     full_screen=True,
-                    style="flex: 1 1 auto; min-height: 400px;"
+                    style="flex: 1; min-height: 400px;"
                 ),
                 # Result card (bottom)
                 ui.card(
@@ -514,7 +510,7 @@ app_ui = ui.page_fillable(
                         #ui.div(
                         #{"style": "flex: 5; display: flex; align-items: flex-end; gap: 5px;"},
                         ui.tags.label("Pixel Size (Å/px):", {"for": "apix_slider", "style": "margin: 0; white-space: nowrap;"}),
-                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.000001, width="100%"),
+                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%"),
                             # ui.div(
                             #     {"style": "flex: 1; display: flex; align-items: flex-end;"},
                             #     ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%")
@@ -532,11 +528,10 @@ app_ui = ui.page_fillable(
                         ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%;max-width: 200px; display: flex; align-items: center; justify-content: center;"),
 
                     ),
-                    style="min-height: 100px;"
+                    style="flex: 1 2 2 1 2;min-height: 100px;"
                 )
             ),
             col_widths=[5, 7],
-            heights_equal="row",
         )
     ),
     # Secondary analysis section - scrollable below
@@ -780,9 +775,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     # Smart heatmap control: track clicked frequency for focused heatmap rendering
     nufft_clicked_frequency = reactive.Value(None)
     nufft_show_focused_heatmap = reactive.Value(False)
-    nufft_heatmap_auto_initialized = reactive.Value(False)  # Track if heatmap was auto-initialized
-    nufft_auto_detected_peak = reactive.Value(None)  # Store auto-detected peak info for initialization
-
+    
     # Flag to prevent NuFFT recalculation when apix is updated from power curve clicks
     apix_updating_from_nufft_click = reactive.Value(False)
     
@@ -956,95 +949,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     #         ui.update_action_button("estimate_tilt", disabled=not has_ellipse, session=session)
 
     # --- All events update apix_master ---
-    # Helper function to format apix values with current precision
-    def format_apix(value, precision=None):
-        """Format apix value with the specified or current precision setting.
-
-        Args:
-            value: The apix value to format
-            precision: Number of decimal places. If None, reads from precision slider.
-                      Pass explicit value to avoid creating reactive dependency in render functions.
-        """
-        if precision is None:
-            precision = int(input.precision_decimals())
-        return f"{value:.{precision}f}"
-
-    def calculate_pixel_size_uncertainty(nominal_apix, image_size, selected_resolution, pixel_uncertainty=0.5):
-        """Calculate pixel size measurement uncertainty based on pixel-level sampling.
-
-        When calibrating using FFT peaks, the peak position has an uncertainty of ±0.5 pixels
-        due to pixel-level sampling. This uncertainty propagates to the calculated pixel size.
-
-        Physics:
-        - Peak position in FFT: r (pixels from center)
-        - Pixel size formula: apix = selected_resolution / (2 * r / image_size)
-                            = selected_resolution * image_size / (2 * r)
-        - For nominal_apix, the peak ratio is: r/image_size = selected_resolution / (2 * nominal_apix)
-        - Therefore: r = image_size * selected_resolution / (2 * nominal_apix)
-
-        Uncertainty propagation:
-        - dr = ±0.5 pixels (sampling uncertainty)
-        - d(apix)/dr = -selected_resolution * image_size / (2 * r²)
-        - Δapix = |d(apix)/dr| * dr
-
-        Args:
-            nominal_apix: The nominal pixel size in Å/pixel (e.g., 0.97, 1.315)
-            image_size: Size of the FFT image region in pixels (e.g., 512, 1024)
-            selected_resolution: The calibration resolution in Å (e.g., 2.13)
-            pixel_uncertainty: Position uncertainty in pixels (default: 0.5)
-
-        Returns:
-            dict with keys:
-                'uncertainty_apix': Absolute uncertainty in Å/pixel
-                'uncertainty_percent': Relative uncertainty as percentage
-                'precision_decimals': Recommended decimal places for display
-                'peak_radius': Calculated peak radius in pixels
-
-        Example:
-            >>> result = calculate_pixel_size_uncertainty(
-            ...     nominal_apix=1.315,
-            ...     image_size=512,
-            ...     selected_resolution=2.13
-            ... )
-            >>> # For nominal_apix=1.315: uncertainty ≈ 0.0034 Å/px, precision=3
-            >>> # For nominal_apix=0.97: uncertainty ≈ 0.0007 Å/px, precision=4
-        """
-        # Calculate the peak radius for this nominal pixel size
-        # From: apix = selected_resolution / (2 * r / image_size)
-        # Solving for r: r = selected_resolution * image_size / (2 * nominal_apix)
-        peak_radius = (selected_resolution * image_size) / (2.0 * nominal_apix)
-
-        # Calculate uncertainty using error propagation
-        # d(apix)/dr = -selected_resolution * image_size / (2 * r²)
-        # Δapix = |d(apix)/dr| * Δr
-        d_apix_dr = selected_resolution * image_size / (2.0 * peak_radius**2)
-        uncertainty_apix = abs(d_apix_dr * pixel_uncertainty)
-
-        # Calculate relative uncertainty as percentage
-        uncertainty_percent = (uncertainty_apix / nominal_apix) * 100.0
-
-        # Determine precision decimals based on uncertainty magnitude
-        # If uncertainty is > 10^-1 (0.1), show 1 decimal
-        # If uncertainty is 10^-2 to 10^-1 (0.01-0.1), show 2 decimals
-        # If uncertainty is 10^-3 to 10^-2 (0.001-0.01), show 3 decimals, etc.
-        if uncertainty_apix >= 0.1:
-            precision_decimals = 1
-        elif uncertainty_apix >= 0.01:
-            precision_decimals = 2
-        elif uncertainty_apix >= 0.001:
-            precision_decimals = 3
-        elif uncertainty_apix >= 0.0001:
-            precision_decimals = 4
-        else:
-            precision_decimals = 5
-
-        return {
-            'uncertainty_apix': uncertainty_apix,
-            'uncertainty_percent': uncertainty_percent,
-            'precision_decimals': precision_decimals,
-            'peak_radius': peak_radius
-        }
-
     @reactive.Effect
     @reactive.event(input.apix_slider)
     def _():
@@ -1052,30 +956,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         if click_flag:
             # Skip updates when apix is being set from NuFFT click
             return
-
-        slider_val = input.apix_slider()
-        apix_master.set(slider_val)
-
-        # Update exact text to match slider value with current precision
-        ui.update_text("apix_exact_str", value=format_apix(slider_val), session=session)
+        apix_master.set(input.apix_slider())
         # Clear 1D plot clicked position when apix changes from slider
         #plot_1d_click_pos.set({'x': None, 'y': None})
-
-    @reactive.Effect
-    @reactive.event(input.precision_decimals)
-    def _():
-        """Update display format when precision changes."""
-        precision = int(input.precision_decimals())
-
-        # Use isolate to read values without creating reactive dependencies
-        with reactive.isolate():
-            current_val = apix_master.get()
-
-        # Format the value with new precision
-        formatted_value = f"{current_val:.{precision}f}"
-
-        # Only update the exact text field - don't touch apix_slider or apix_master
-        ui.update_text("apix_exact_str", value=formatted_value, session=session)
 
     @reactive.Effect
     @reactive.event(input.apix_set_btn)
@@ -1089,7 +972,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     return
                 #apix_master.set(val)
                 ui.update_slider("apix_slider", value=val, session=session)
-                ui.update_text("apix_exact_str", value=format_apix(val), session=session)
+                ui.update_text("apix_exact_str", value=str(round(val, 4)), session=session)
                 # Clear 1D plot clicked position when apix changes from Set button
                 #plot_1d_click_pos.set({'x': None, 'y': None})
         except Exception:
@@ -1634,7 +1517,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
                 # Update the apix slider with the refined value
                 ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                ui.update_text("apix_exact_str", value=format_apix(calculated_apix), session=session)
+                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
             
             print(f"Autocorrect completed using local maximum search.")
                 
@@ -1765,7 +1648,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         if primary_tilt and primary_tilt[3] is not None:
             untilted_apix = primary_tilt[3]
             ui.update_slider("apix_slider", value=untilted_apix, session=session)
-            ui.update_text("apix_exact_str", value=format_apix(untilted_apix), session=session)
+            ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
             print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
         
         print(f"Tilt information stored in separate storages")
@@ -1868,8 +1751,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             cached_nufft_heatmap_data.set(None)
             cached_nufft_power_data.set(None)
             nufft_calculation_requested.set(False)  # Reset calculation request
-            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
-            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             fft_widget.set(None)  # Clear FFT widget
             base_fft_trigger.set(0)  # Also reset base trigger for clean state
             return
@@ -1919,12 +1800,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             cached_nufft_heatmap_data.set(None)
             cached_nufft_power_data.set(None)
             nufft_calculation_requested.set(False)  # Reset calculation request
-            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
-            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             fft_widget.set(None)  # Clear FFT widget
             base_fft_trigger.set(0)  # Also reset base trigger for clean state
 
-
+            
             # Clear all overlay storage when upload fails
             lattice_points_storage.set([])
             ellipse_params_storage.set(None)
@@ -1968,7 +1847,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             nominal_apix_ui_synced.set(False)  # Mark as not yet synced
             ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
-            ui.update_text("apix_exact_str", value=format_apix(nominal_value), session=session)
+            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
             print(f"Set apix slider and exact value to match nominal apix: {nominal_value:.3f}")
             
@@ -2051,8 +1930,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_filename.set(None)
             original_image_data.set(None)
             binned_image_data.set(None)
-            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
-            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
 
     # Helper function for URL downloading logic
     def download_image_from_url(url):
@@ -2106,7 +1983,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             nominal_value = extract_nominal(original_filename)
             ui.update_numeric("nominal_apix", value=nominal_value, session=session)
             ui.update_slider("apix_slider", value=nominal_value, session=session)
-            ui.update_text("apix_exact_str", value=format_apix(nominal_value), session=session)
+            ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
             
             # Set the image data (same as upload handler)
@@ -2200,8 +2077,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             image_filename.set(None)
             original_image_data.set(None)
             binned_image_data.set(None)
-            nufft_heatmap_auto_initialized.set(False)  # Reset auto-initialization flag
-            nufft_auto_detected_peak.set(None)  # Clear auto-detected peak
             return False
 
     @reactive.Effect
@@ -2239,23 +2114,23 @@ def server(input: Inputs, output: Outputs, session: Session):
             current_zoom_state.get('drawn_region') is None):
             
             print("🔧 Setting up initial pre-selected region...")
-
-            # Set up the initial region coordinates
+            
+            # Set up the initial region coordinates 
             initial_coords = {
-                'x0': 250,
-                'x1': 800,
-                'y0': 250,
-                'y1': 800
+                'x0': 300,
+                'x1': 700,
+                'y0': 300,
+                'y1': 700
             }
             box_coordinates.set(initial_coords)
-
+            
             # Update zoom state with the initial region
             new_zoom_state = current_zoom_state.copy()
             new_zoom_state['drawn_region'] = initial_coords
             new_zoom_state['is_zoomed'] = True
             image_zoom_state.set(new_zoom_state)
-
-            print(f"✅ Pre-selected initial region: X[250,800] Y[250,800]")
+            
+            print(f"✅ Pre-selected initial region: X[300,700] Y[300,700]")
 
     @reactive.Effect
     def _():
@@ -2399,7 +2274,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             )
         )
         
-        figw.add_selection(x0=250, y0=250, x1=800, y1=800, line=dict(color='blue',width=4))
+        figw.add_selection(x0=300, y0=300, x1=700, y1=700,line=dict(color='blue',width=4))
         # Hide axes but keep them functional for events
         figw.update_xaxes(
             visible=False,
@@ -2821,7 +2696,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         
                         # Update the apix slider with the calculated value
                         ui.update_slider("apix_slider", value=calculated_apix, session=session)
-                        ui.update_text("apix_exact_str", value=format_apix(calculated_apix), session=session)
+                        ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
                     else:
                         print(f"Circle: center=({cx}, {cy}), radius={r:.2f}")
                         print("Could not calculate apix - resolution or radius is invalid")
@@ -2870,9 +2745,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         scatter_trace.on_click(update_point)
 
         # Add hover callback for resolution ring preview
-        # Cache the hover ring index for faster updates
-        hover_ring_cache = {'idx': None, 'N': fft_arr.shape[0], 'cx': fft_arr.shape[0]/2, 'cy': fft_arr.shape[0]/2}
-
         def update_hover_ring(trace, points, state):
             """Update resolution ring on hover to preview where it would be placed."""
             # Get current mode dynamically
@@ -2885,54 +2757,40 @@ def server(input: Inputs, output: Outputs, session: Session):
                 hover_x = scatter_trace.x[point_idx]
                 hover_y = scatter_trace.y[point_idx]
 
-                # Calculate radius directly from hover position (use cached center coordinates)
-                cx = hover_ring_cache['cx']
-                cy = hover_ring_cache['cy']
+                # Calculate radius directly from hover position (no local max search for speed)
+                N = fft_arr.shape[0]
+                cx = cy = N/2
                 r = ((hover_x-cx)**2 + (hover_y-cy)**2)**0.5
 
-                # Fast path: Try to use cached index first
-                hover_ring_idx = hover_ring_cache['idx']
+                # Update hover ring position in place - use batch_update for atomic update
+                with fw.batch_update():
+                    # Find existing hover ring (RED dashed) by checking shapes
+                    hover_ring_idx = None
+                    for i, shape in enumerate(fw.layout.shapes):
+                        if (hasattr(shape, 'line') and
+                            hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
+                            hasattr(shape.line, 'color') and shape.line.color == 'red'):
+                            hover_ring_idx = i
+                            break
 
-                # Validate cached index (only if we have one)
-                if hover_ring_idx is not None and hover_ring_idx < len(fw.layout.shapes):
-                    shape = fw.layout.shapes[hover_ring_idx]
-                    # Quick validation: check if it's still our hover ring
-                    if (hasattr(shape, 'line') and
-                        hasattr(shape.line, 'color') and shape.line.color == 'red' and
-                        hasattr(shape.line, 'dash') and shape.line.dash == 'dash'):
-                        # Fast update using relayout (much faster than batch_update)
-                        fw.layout.shapes[hover_ring_idx].update(
-                            x0=cx-r, y0=cy-r, x1=cx+r, y1=cy+r
-                        )
-                        return  # Early return for fast path
-
-                # Slow path: Need to find or create the hover ring
-                hover_ring_idx = None
-                for i, shape in enumerate(fw.layout.shapes):
-                    if (hasattr(shape, 'line') and
-                        hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
-                        hasattr(shape.line, 'color') and shape.line.color == 'red'):
-                        hover_ring_idx = i
-                        hover_ring_cache['idx'] = i  # Cache for next time
-                        break
-
-                if hover_ring_idx is not None:
-                    # Update using relayout (faster than batch_update)
-                    fw.layout.shapes[hover_ring_idx].update(
-                        x0=cx-r, y0=cy-r, x1=cx+r, y1=cy+r
-                    )
-                else:
-                    # Create new hover ring (first hover) - RED dashed with thin line
-                    hover_circle = {
-                        'type': 'circle',
-                        'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
-                        'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
-                        'layer': 'above',
-                        'editable': False
-                    }
-                    current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
-                    fw.layout.shapes = current_shapes + [hover_circle]
-                    hover_ring_cache['idx'] = len(current_shapes)  # Cache the new index
+                    if hover_ring_idx is not None:
+                        # Update all 4 properties atomically within batch_update
+                        hover_ring = fw.layout.shapes[hover_ring_idx]
+                        hover_ring.x0 = cx - r
+                        hover_ring.y0 = cy - r
+                        hover_ring.x1 = cx + r
+                        hover_ring.y1 = cy + r
+                    else:
+                        # Create new hover ring (first hover) - RED dashed with thin line
+                        hover_circle = {
+                            'type': 'circle',
+                            'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
+                            'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
+                            'layer': 'above',
+                            'editable': False
+                        }
+                        current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
+                        fw.layout.shapes = current_shapes + [hover_circle]
 
         # Attach hover callback to scatter trace
         scatter_trace.on_hover(update_hover_ring)
@@ -3046,7 +2904,16 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq, input.nufft_display_range, nufft_calculation_requested)
     def calculate_nufft_when_requested():
         """Calculate NuFFT data ONLY when sampling parameters change or explicitly requested."""
+        import traceback as tb
+        print(f"\n{'='*80}")
+        print(f"🔔 calculate_nufft_when_requested CALLED - requested={nufft_calculation_requested.get()}")
+        print(f"🔔 Call stack (last 3 frames):")
+        for line in tb.format_stack()[-4:-1]:
+            print(f"   {line.strip()}")
+
         if not nufft_calculation_requested.get():
+            print("   ❌ NuFFT calculation not requested, skipping")
+            print(f"{'='*80}\n")
             return
 
         # Get current slider values
@@ -3156,6 +3023,10 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             # Cache the NuFFT power curve data
+            print(f"\n{'='*80}")
+            print(f"💾 STEP 5b: SETTING cached_nufft_power_data with apix={current_apix}")
+            print(f"     This will trigger nufft_power_curve render!")
+            print(f"{'='*80}\n")
             cached_nufft_power_data.set({
                 'pwr_curve': pwr_curve,
                 'pwr2d_raw': pwr2d_raw,
@@ -3798,29 +3669,29 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render_widget
-    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, cached_nufft_heatmap_data)
+    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq)
     def nufft_heatmap():
         from shiny import req
         import time
         plot_start = time.time()
-
+        print(f"🎨 HEATMAP PLOT START: {plot_start:.3f}")
+        
         # Check if we should show focused heatmap
         show_focused = nufft_show_focused_heatmap.get()
         clicked_freq = nufft_clicked_frequency.get()
-
+        
         if not show_focused:
             # Initial state: Show placeholder message encouraging user to click
-            # Only re-render on mode changes, not on slider changes
             print("🎯 INITIAL STATE: Showing click-to-generate-heatmap placeholder")
-
+            
             fig = go.Figure()
             fig.add_annotation(
                 text="<b>📊 Interactive Heatmap</b><br><br>" +
                      "👆 Click on the power curve above<br>" +
                      "to generate a focused heatmap<br>" +
-                     "around your selected frequency<br><br>", #+
-                    #  "🎯 This saves time by showing<br>" +
-                    #  "only the relevant data slice!",
+                     "around your selected frequency<br><br>" +
+                     "🎯 This saves time by showing<br>" +
+                     "only the relevant data slice!",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5, xanchor='center', yanchor='middle',
                 showarrow=False,
@@ -3830,7 +3701,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 borderwidth=1
             )
             fig.update_layout(
-                #title="Click Power Curve to Generate Focused Heatmap",
+                title="Click Power Curve to Generate Focused Heatmap",
                 height=300,
                 width=650,
                 margin=dict(l=80, r=20, t=60, b=40),
@@ -3839,7 +3710,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 yaxis=dict(showgrid=False, showticklabels=False, showline=False, zeroline=False),
                 plot_bgcolor="rgba(0,0,0,0)"
             )
-
+            
             plot_end = time.time()
             print(f"🏁 PLACEHOLDER HEATMAP completed in {plot_end - plot_start:.3f} seconds")
 
@@ -3849,10 +3720,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             return go.FigureWidget(fig)
         
         # Focused mode: Generate heatmap around clicked frequency
+        print(f"🎯 FOCUSED MODE: Generating heatmap around frequency {clicked_freq:.6f} 1/Å")
+        
         # Require NuFFT calculation state to exist
         calc_state = nufft_calculation_state.get()
         req(calc_state['region'] is not None)
-
+        
         # Request NuFFT calculation if not already done
         nufft_calculation_requested.set(True)
         
@@ -4050,9 +3923,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Create detailed hover text for all pixels in focused view (it's small now!)
             # Calculate tentative apix for each frequency point (same formula as power curve)
-            # Use current_apix from cached data instead of reading input.nominal_apix()
-            # to avoid creating unnecessary reactive dependencies that cause re-renders
-            nominal_apix = current_apix  # Already stored in cached_heatmap_data['apix']
+            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
             target_spatial_freq = 1.0 / target_resolution
             tentative_apix_array = nominal_apix * (focused_freq_range / target_spatial_freq)
 
@@ -4277,17 +4148,30 @@ def server(input: Inputs, output: Outputs, session: Session):
     def nufft_power_curve():
         from shiny import req
         import time
+        import traceback as tb
 
         render_count["count"] += 1
         power_plot_start = time.time()
 
+        print(f"\n{'='*80}")
+        print(f"📈 POWER CURVE RENDER #{render_count['count']} CALLED at {power_plot_start:.3f}")
+        print(f"📈 Call stack (last 3 frames):")
+        for line in tb.format_stack()[-4:-1]:
+            print(f"   {line.strip()}")
+
         # Get cached data - this is the ONLY reactive dependency we need for rendering
         # Don't read nufft_calculation_state here as it causes extra re-renders
         cached_power_data = cached_nufft_power_data.get()
+        print(f"📈 cached_power_data exists: {cached_power_data is not None}")
 
         # Require data to exist - this will prevent rendering until data is available
         if cached_power_data is None:
+            print(f"📈 RENDER #{render_count['count']}: No data yet, returning empty widget")
+            print(f"{'='*80}\n")
             req(False)  # This will stop execution here
+        
+        print("📈 Using NuFFT power curve data")
+        print(f"   📊 CACHED DATA KEYS: {list(cached_power_data.keys())}")
 
         pwr_curve = cached_power_data['pwr_curve']
         pwr = cached_power_data['pwr2d_raw']
@@ -4296,6 +4180,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         res_low = cached_power_data['res_low']
         res_high = cached_power_data['res_high']
         current_apix = cached_power_data['apix']
+        print(f"   📊 APIX from cached data: {current_apix}")
+        print(f"   📊 Resolution range: {res_low:.3f} - {res_high:.3f} Å")
+        print(f"   📊 pwr_curve shape: {pwr_curve.shape}")
+        print(f"   📊 pwr_curve min/max/mean: {pwr_curve.min():.6f} / {pwr_curve.max():.6f} / {pwr_curve.mean():.6f}")
+        print(f"   📊 pwr_curve first 10 values: {pwr_curve[:10]}")
+        print(f"   📊 pwr_curve last 10 values: {pwr_curve[-10:]}")
 
         # Get values from cached data to avoid triggering re-renders when inputs change
         # The cached data already has the correct target_resolution calculated during NuFFT computation
@@ -4306,7 +4196,13 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         # Read log_y input
         log_y = input.nufft_log_y()
+        print(f"   📊 Using cached values: target_resolution={target_resolution:.3f}Å, log_y={log_y}")
+        print(f"   📊 Reactive dependencies: checking what triggered this render...")
         apix_source = f"Nominal Apix: {current_apix:.3f}"
+        
+        print(f"   pwr_curve shape: {pwr_curve.shape if hasattr(pwr_curve, 'shape') else type(pwr_curve)}")
+        print(f"   pwr shape: {pwr.shape if hasattr(pwr, 'shape') else type(pwr)}")
+        print(f"   r_samples: {r_samples}, theta_samples: {theta_samples}")
         
         try:
             
@@ -4347,9 +4243,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Calculate tentative apix for each spatial frequency point
             # Formula: tentative_apix = nominal_apix * (spatial_freq / target_spatial_freq)
             # This shows what the apix would be if the highest peak were at the target resolution
-            # Use current_apix from cached data instead of reading input.nominal_apix()
-            # to avoid creating unnecessary reactive dependencies that cause re-renders
-            nominal_apix = current_apix  # Already stored in cached_power_data['apix']
+            nominal_apix = float(input.nominal_apix()) if input.nominal_apix() else current_apix
             target_spatial_freq = 1.0 / target_resolution
             tentative_apix_array = nominal_apix * (spatial_freq_array / target_spatial_freq)
             
@@ -4360,6 +4254,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             # prominence ensures we only get significant peaks
             peaks, properties = find_peaks(y_data, prominence=0.5)
 
+            print(f"   🔍 FOUND {len(peaks)} LOCAL MAXIMA in power curve")
             if len(peaks) > 0:
                 # Get the highest peak (maximum intensity)
                 peak_intensities = y_data[peaks]
@@ -4373,6 +4268,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # then: actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
                 actual_apix = nominal_apix * (peak_freq / target_spatial_freq)
 
+                print(f"   🎯 HIGHEST PEAK at freq={peak_freq:.4f} (1/Å), resolution={peak_res:.3f}Å")
+                print(f"   📏 CALCULATED APIX from peak: {actual_apix:.4f} Å/px")
+                print(f"   📊 Peak intensity: {peak_intensity:.4f}")
+
                 # Store for later use
                 peak_info = {
                     'freq': peak_freq,
@@ -4381,6 +4280,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'apix': actual_apix
                 }
             else:
+                print(f"   ⚠️  NO SIGNIFICANT PEAKS FOUND")
                 peak_info = None
 
             # Create the plot with hoverable vertical dash line
@@ -4442,7 +4342,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             fig.update_layout(
                 title=dict(
-                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For multiplet peak, select the leftmost subpeak.</sub>',
+                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For the peak is multiplet, select the leftmost subpeak.</sub>',
                     font=dict(size=16)
                 ),
                 xaxis_title='Spatial Resolution (1/Å)',
@@ -4479,16 +4379,25 @@ def server(input: Inputs, output: Outputs, session: Session):
             # Store widget for click event access
             nufft_power_widget.set(fw)
 
-            # Update apix slider with the calculated apix from the peak
-            # Note: Don't call format_apix() here to avoid creating reactive dependency on precision_decimals
-            # The apix_slider effect will update apix_exact_str with correct precision automatically
+            # Update apix slider and exact value with the calculated apix from the peak
             if peak_info is not None:
                 calculated_apix = peak_info['apix']
+                print(f"   📝 UPDATING apix_slider and apix_exact_str to {calculated_apix:.4f}")
                 ui.update_slider("apix_slider", value=calculated_apix)
+                ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}")
 
-                # Store auto-detected peak info (a separate Effect will handle initialization)
-                # This avoids setting reactive values inside render function which causes Shiny errors
-                nufft_auto_detected_peak.set(peak_info)
+            power_plot_end = time.time()
+            power_plot_duration = power_plot_end - power_plot_start
+            print(f"🏁 POWER CURVE PLOT COMPLETED in {power_plot_duration:.3f} seconds")
+            print(f"🎯 TOTAL END-TO-END TAB SWITCH TO PLOTS VISIBLE: Check previous timing logs")
+
+            # Print what's actually being plotted
+            if len(fw.data) > 0:
+                plotted_y = fw.data[0].y
+                print(f"   📈 ACTUALLY PLOTTING: {len(plotted_y)} points")
+                print(f"   📈 Y-data min/max/mean: {np.min(plotted_y):.6f} / {np.max(plotted_y):.6f} / {np.mean(plotted_y):.6f}")
+                print(f"   📈 Y-data first 10: {plotted_y[:10]}")
+                print(f"   📈 Y-data last 10: {plotted_y[-10:]}")
 
             return fw
             
@@ -4523,25 +4432,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         # which uses shared_x_range.get() in its layout
 
     @reactive.Effect
-    @reactive.event(nufft_auto_detected_peak)
-    def auto_initialize_heatmap():
-        """Auto-initialize heatmap with detected peak (separate from render to avoid reactivity errors)."""
-        peak_info = nufft_auto_detected_peak.get()
-
-        # Only auto-initialize once on first peak detection
-        if peak_info is not None and not nufft_heatmap_auto_initialized.get():
-            nufft_clicked_frequency.set(peak_info['freq'])
-            nufft_show_focused_heatmap.set(True)
-            nufft_heatmap_auto_initialized.set(True)
-            print(f"🎯 Auto-initializing heatmap at detected peak: {peak_info['freq']:.6f} 1/Å")
-
-    @reactive.Effect
     def setup_nufft_power_click_handler():
         """Set up click event handler for NuFFT power curve."""
         widget = nufft_power_widget.get()
         if widget is None:
             return
-
+        
         # Get the current data to enable click info extraction
         calc_state = nufft_calculation_state.get()
         if calc_state['region'] is None:
@@ -4549,11 +4445,14 @@ def server(input: Inputs, output: Outputs, session: Session):
             
         def on_click(trace, points, selector):
             """Handle click events on NuFFT power curve."""
+            import time
+            click_start = time.time()
+            print(f"🖱️  CLICK EVENT START: {click_start:.3f}")
             if points.point_inds:
                 try:
                     # Get clicked point information
                     point_idx = points.point_inds[0]
-
+                    
                     # Get the tentative apix from the hover data (customdata)
                     tentative_apix = None
                     if hasattr(trace, 'customdata') and trace.customdata is not None and point_idx < len(trace.customdata):
@@ -4623,18 +4522,25 @@ def server(input: Inputs, output: Outputs, session: Session):
                                     widget.layout.shapes = current_shapes
                         
                         # Update the apix slider directly to the tentative apix value
-                        ui.update_text("apix_exact_str", value=format_apix(tentative_apix))
+                        ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
                         ui.update_slider("apix_slider", value=tentative_apix)
-
+                        
                         # Enable focused heatmap around clicked frequency
                         if x_val is not None:
                             nufft_clicked_frequency.set(x_val)
                             nufft_show_focused_heatmap.set(True)
+                            print(f"🎯 FOCUSED HEATMAP enabled around frequency {x_val:.6f} 1/Å")
+                        
+                        click_end = time.time()
+                        click_duration = click_end - click_start
+                        print(f"🎯 CLICK EVENT COMPLETED in {click_duration:.3f} seconds")
                         
                     # If tentative_apix is None, do nothing
-
+                        
                 except Exception as e:
-                    print(f"❌ CLICK EVENT FAILED: {e}")
+                    click_end = time.time()
+                    click_duration = click_end - click_start
+                    print(f"❌ CLICK EVENT FAILED after {click_duration:.3f} seconds: {e}")
                     import traceback
                     traceback.print_exc()
         
@@ -4777,7 +4683,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                             # Set flag to prevent NuFFT recalculation during UI update
                             apix_updating_from_nufft_click.set(True)
 
-                            ui.update_text("apix_exact_str", value=format_apix(tentative_apix))
+                            ui.update_text("apix_exact_str", value=f"{tentative_apix:.4f}")
                             ui.update_slider("apix_slider", value=tentative_apix)
 
                             # Clear flag after a short delay
@@ -5413,26 +5319,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Reset index after deletion
             updated_data = updated_data.reset_index(drop=True)
-
-            # Recalculate statistics with current precision
-            precision = int(input.precision_decimals())
-            def recalc_stats(df):
-                if len(df) == 0:
-                    return df
-                df_copy = df.copy()
-                df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Pixel Size'], errors='coerce')
-                for nominal in df_copy['Nominal'].unique():
-                    mask = df_copy['Nominal'] == nominal
-                    apix_values = df_copy.loc[mask, 'Apix_numeric'].dropna()
-                    if len(apix_values) > 0:
-                        mean_val = apix_values.mean()
-                        std_val = apix_values.std() if len(apix_values) > 1 else 0.0
-                        stats_str = f"{mean_val:.{precision}f} ± {std_val:.{precision}f}"
-                        df_copy.loc[mask, 'Average Pixel Size'] = stats_str
-                return df_copy.drop('Apix_numeric', axis=1)
-
-            updated_data = recalc_stats(updated_data)
-
+            
             # Update the reactive value
             region_table_data.set(updated_data)
             
@@ -6055,20 +5942,16 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             # Use current apix value (allows user to adjust apix after FFT calculation)
             apix_value = get_apix()
-
+            
             # Get nominal value from textbox
             nominal_value = float(input.nominal_apix())
-
-            # Format apix value with current precision setting
-            precision = int(input.precision_decimals())
-            apix_formatted = f"{apix_value:.{precision}f}"
-
+            
             # Create new row
             new_row = pd.DataFrame({
                 'Filename': [filename],
                 'Region Size': [region_size],
                 'Region Location': [region_location],
-                'Pixel Size': [apix_formatted],
+                'Pixel Size': [f"{apix_value:.4f}"],
                 'Nominal': [nominal_value],
                 'Average Pixel Size': ['']  # Will be calculated after adding
             })
@@ -6083,9 +5966,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Convert Pixel Size column to float for calculations
                 df_copy['Apix_numeric'] = pd.to_numeric(df_copy['Pixel Size'], errors='coerce')
 
-                # Get current precision for formatting statistics
-                precision = int(input.precision_decimals())
-
                 # Group by nominal value and calculate stats
                 for nominal in df_copy['Nominal'].unique():
                     mask = df_copy['Nominal'] == nominal
@@ -6094,7 +5974,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     if len(apix_values) > 0:
                         mean_val = apix_values.mean()
                         std_val = apix_values.std() if len(apix_values) > 1 else 0.0
-                        stats_str = f"{mean_val:.{precision}f} ± {std_val:.{precision}f}"
+                        stats_str = f"{mean_val:.4f} ± {std_val:.4f}"
                         df_copy.loc[mask, 'Average Pixel Size'] = stats_str
 
                 return df_copy.drop('Apix_numeric', axis=1)
