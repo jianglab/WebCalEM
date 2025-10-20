@@ -1164,13 +1164,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                     return
             
             # Clear all previous FFT data and trigger complete refresh
+            # The render functions will wait for new data via req(False) when data is None
             cached_fft_image.set(None)
             cached_nufft_heatmap_data.set(None)
             cached_nufft_power_data.set(None)
             nufft_calculation_requested.set(False)  # Reset calculation request
+            nufft_show_focused_heatmap.set(False)  # Reset heatmap trigger so it can be set to True again
             fft_widget.set(None)
-            
-            # Trigger FFT calculation
+
+            # Trigger FFT calculation which will populate the caches with new data
             base_fft_trigger.set(base_fft_trigger.get() + 1)
             
             # Trigger autoscale (only on calc_fft, not on contrast changes)
@@ -3671,16 +3673,18 @@ def server(input: Inputs, output: Outputs, session: Session):
     
     @output
     @render_widget
-    @reactive.event(nufft_show_focused_heatmap, nufft_clicked_frequency, input.nufft_r_sampling_freq, input.nufft_theta_sampling_freq)
     def nufft_heatmap():
         from shiny import req
         import time
         plot_start = time.time()
         print(f"🎨 HEATMAP PLOT START: {plot_start:.3f}")
-        
+
         # Check if we should show focused heatmap
         show_focused = nufft_show_focused_heatmap.get()
-        clicked_freq = nufft_clicked_frequency.get()
+        # Use isolate() to read clicked_freq without making it a reactive dependency
+        # This prevents double-rendering when both values change
+        with reactive.isolate():
+            clicked_freq = nufft_clicked_frequency.get()
         
         if not show_focused:
             # Initial state: Show placeholder message encouraging user to click
