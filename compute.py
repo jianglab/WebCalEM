@@ -22,6 +22,27 @@ try:
 except ImportError:
     FINUFFT_AVAILABLE = False
 from scipy.stats import median_abs_deviation
+from shiny import ui
+from shiny.express import expressify
+
+
+@expressify
+def google_analytics(id):
+    if id is None or not len(id):
+        return
+    ui.head_content(
+        ui.HTML(
+            f"""
+            <script async src="https://www.googletagmanager.com/gtag/js?id={id}"></script>
+            <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){{dataLayer.push(arguments);}}
+            gtag('js', new Date());
+            gtag('config', '{id}');
+            </script>
+            """
+        )
+    )
 
 
 def fit_ellipse_fixed_center(points, center=(0, 0)):

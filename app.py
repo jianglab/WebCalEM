@@ -34,7 +34,8 @@ from compute import (
     plot_image,
     get_image_with_binning,
     extract_region_no_binning,
-    bin_image
+    bin_image,
+    google_analytics
 )
 # ---------- Documentation ----------
 """Magnification Calibration Tool
@@ -104,6 +105,7 @@ Output:
 
 # Create the main UI using page_sidebar for proper Shiny styling
 app_ui = ui.page_fillable(
+    google_analytics(id="G-87KWVDCHHL"),
     # ui.sidebar(
     #     # App title and description in sidebar
     #     ui.h1("Magnification Calibration", style="font-size: 24px; font-weight: bold; margin-bottom: 15px; color: #333;"),
@@ -4279,6 +4281,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                     'intensity': peak_intensity,
                     'apix': actual_apix
                 }
+
+                # Auto-trigger heatmap generation for the detected peak
+                nufft_clicked_frequency.set(peak_freq)
+                nufft_show_focused_heatmap.set(True)
+                print(f"🎯 AUTO-TRIGGERED FOCUSED HEATMAP for peak at frequency {peak_freq:.6f} 1/Å")
             else:
                 print(f"   ⚠️  NO SIGNIFICANT PEAKS FOUND")
                 peak_info = None
