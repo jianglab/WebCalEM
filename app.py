@@ -436,7 +436,10 @@ app_ui = ui.page_fillable(
                                 ),
                                 ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0;"),
                                 ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
-
+                                ui.div(
+                                    {"style": "margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 5px; font-size: 0.9em;"},
+                                    ui.output_text("tilt_output")
+                                )
                             )
                         )
                     ),
@@ -1937,6 +1940,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         # Clear peak storage
         tuned_markers_storage.set([])
 
+        # Clear tilt info
+        tilt_info_storage.set(None)
+        tilt_info_green_storage.set(None)
+        tilt_info_red_storage.set(None)
+
         # Clear ellipse from widget
         fft_widget_instance = fft_widget.get()
         if fft_widget_instance is not None:
@@ -2857,31 +2865,31 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         # Calculate tentative apix for each point in the grid
         # Use resolution parameters from widget data (no direct input dependencies)
-            
+
         # Calculate tentative apix for each grid point
         # Distance from center to each point
         center_x, center_y = fft_arr.shape[1] / 2, fft_arr.shape[0] / 2
         distances = np.sqrt((x_coords - center_x)**2 + (y_coords - center_y)**2)
-        
+
         # Convert distance to spatial frequency (1/Å)
         # For FFT: spatial_freq = distance_in_pixels / (image_size_in_pixels * apix)
         fft_image_size = fft_arr.shape[0]  # Assuming square
         target_spatial_freq = 1.0 / target_resolution
-        
+
         # Calculate tentative apix: what apix would make this distance correspond to target resolution
         # From: spatial_freq = distance / (size * apix)
         # Solve for apix: apix = distance / (size * spatial_freq)
         tentative_apix_array = distances / (fft_image_size * target_spatial_freq)
-        
+
         # Avoid division by zero for center point
         tentative_apix_array = np.where(distances == 0, nominal_apix, tentative_apix_array)
-        
+
         scatter_trace = go.Scatter(
             x=x_coords.flatten(),
             y=y_coords.flatten(),
             mode='markers',
             marker=dict(
-                size=3,  # Small size for dense grid
+                size=3,  # Small size for sparse grid
                 opacity=0,  # Completely transparent
                 color='rgba(0,0,0,0)'  # Valid transparent color
             ),
@@ -2891,13 +2899,13 @@ def server(input: Inputs, output: Outputs, session: Session):
             customdata=np.column_stack([distances.flatten(), tentative_apix_array.flatten()])
         )
         fig.add_trace(scatter_trace)
-        
 
-        
+
+
         # Hide axes but keep them functional for events
         fig.update_xaxes(visible=False)
         fig.update_yaxes(visible=False)
-        
+
         # Set layout with square aspect ratio and click events enabled
         fig.update_layout(
             autosize=True,
@@ -2906,7 +2914,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             dragmode='pan',
             title=None,
             clickmode='event',
-            hovermode='closest'  # Enable hover to show apix
+            hovermode='closest',  # Snap to closest point for hover
+            hoverdistance=20  # Increase hover capture distance to ~20 pixels (catches clicks between grid points)
         )
         
         # Force square display but allow arbitrary zoom box ratios
@@ -3126,22 +3135,42 @@ def server(input: Inputs, output: Outputs, session: Session):
                     if len(current_peaks) == 0:
                         # No peaks - no shape
                         shape_to_draw = None
+                        # Clear tilt info
+                        tilt_info_storage.set(None)
+                        tilt_info_green_storage.set(None)
+                        tilt_info_red_storage.set(None)
                         print(f"  ✓ No peaks, no shape")
 
                     elif len(current_peaks) == 1 or len(current_peaks) == 2:
                         # 1-2 peaks: Draw circle through first peak
                         peak_x, peak_y = current_peaks[0]
                         cx = cy = fft_display_size / 2
-                        r = np.sqrt((peak_x - cx)**2 + (peak_y - cy)**2)
+                        r_display = np.sqrt((peak_x - cx)**2 + (peak_y - cy)**2)
+
+                        # Convert radius to full resolution
+                        r_full = r_display / scale_factor
+
+                        # Calculate apix from circle radius
+                        resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+                        if resolution is not None and r_full > 0:
+                            calculated_apix = (r_full * resolution) / region_size
+                            ui.update_slider("apix_slider", value=calculated_apix, session=session)
+                            ui.update_text("apix_exact_str", value=f"{calculated_apix:.4f}", session=session)
+                            print(f"  ✓ Circle through first peak (r={r_full:.1f}px, apix={calculated_apix:.4f})")
+                        else:
+                            print(f"  ✓ Circle through first peak (r={r_full:.1f}px)")
 
                         shape_to_draw = {
                             'type': 'circle',
-                            'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
+                            'x0': cx-r_display, 'y0': cy-r_display, 'x1': cx+r_display, 'y1': cy+r_display,
                             'line': {'color': 'cyan', 'width': 2, 'dash': 'longdash'},
                             'layer': 'above',
                             'fillcolor': 'rgba(0,0,0,0)'
                         }
-                        print(f"  ✓ Circle through first peak (r={r:.1f}px)")
+                        # Clear tilt info (circles don't have tilt)
+                        tilt_info_storage.set(None)
+                        tilt_info_green_storage.set(None)
+                        tilt_info_red_storage.set(None)
 
                     elif len(current_peaks) >= 3:
                         # 3+ peaks: Fit ellipse
@@ -3152,6 +3181,29 @@ def server(input: Inputs, output: Outputs, session: Session):
                             # Fit ellipse in full resolution space
                             cy_full, cx_full = region_size / 2, region_size / 2
                             a, b, theta = fit_ellipse_fixed_center(full_res_peaks, center=(cx_full, cy_full))
+
+                            # Calculate tilt information
+                            small_axis = min(a, b)
+                            large_axis = max(a, b)
+                            tilt_angle = calculate_tilt_angle(small_axis, large_axis)
+
+                            # Calculate untilted apix from major axis
+                            resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+                            untilted_apix = None
+                            if resolution is not None:
+                                untilted_apix = (large_axis * resolution) / region_size
+
+                            # Store tilt info (small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta)
+                            tilt_info = (small_axis, large_axis, tilt_angle, untilted_apix, theta)
+                            tilt_info_green_storage.set(tilt_info)
+                            tilt_info_storage.set(tilt_info)
+
+                            # Update apix_slider with untilted apix
+                            if untilted_apix is not None:
+                                ui.update_slider("apix_slider", value=untilted_apix, session=session)
+                                ui.update_text("apix_exact_str", value=f"{untilted_apix:.4f}", session=session)
+
+                            print(f"  📐 Tilt: {np.degrees(tilt_angle):.2f}°, Untilted Apix: {untilted_apix:.4f} Å/px" if untilted_apix else f"  📐 Tilt: {np.degrees(tilt_angle):.2f}°")
 
                             # Scale back to display coordinates
                             a_scaled = a * scale_factor
@@ -5155,71 +5207,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.text
     def tilt_output():
         """Display tilt estimation results."""
-        # Check dual tilt storages first
-        green_tilt = tilt_info_green_storage.get()
-        red_tilt = tilt_info_red_storage.get()
-        
-        results = []
-        
-        # Format green ellipse results
-        if green_tilt is not None:
-            # Handle both old (4-element) and new (5-element) formats
-            if len(green_tilt) >= 5:
-                small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = green_tilt
-                orientation_degrees = math.degrees(orientation_theta)
-            else:
-                small_axis, large_axis, tilt_angle, untilted_apix = green_tilt
-                orientation_degrees = None
-                
-            tilt_angle_degrees = math.degrees(tilt_angle)
-            
-            apix_str = ""
-            if untilted_apix is not None:
-                apix_str = f", Apix: {untilted_apix:.3f} Å/px"
-            
-            orientation_str = ""
-            if orientation_degrees is not None:
-                orientation_str = f", Orientation: {orientation_degrees:.1f}°"
-            
-            green_result = (f"🟢 User-clicked: Minor axis: {small_axis:.2f}, "
-                           f"Major axis: {large_axis:.2f}, "
-                           f"Tilt angle: {tilt_angle_degrees:.2f}°"
-                           f"{orientation_str}"
-                           f"{apix_str}")
-            results.append(green_result)
-        
-        # Format red ellipse results
-        if red_tilt is not None:
-            # Handle both old (4-element) and new (5-element) formats
-            if len(red_tilt) >= 5:
-                small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = red_tilt
-                orientation_degrees = math.degrees(orientation_theta)
-            else:
-                small_axis, large_axis, tilt_angle, untilted_apix = red_tilt
-                orientation_degrees = None
-                
-            tilt_angle_degrees = math.degrees(tilt_angle)
-            
-            apix_str = ""
-            if untilted_apix is not None:
-                apix_str = f", Apix: {untilted_apix:.3f} Å/px"
-            
-            orientation_str = ""
-            if orientation_degrees is not None:
-                orientation_str = f", Orientation: {orientation_degrees:.1f}°"
-            
-            red_result = (f"🟢 Minor axis: {small_axis:.2f}, "
-                         f"Major axis: {large_axis:.2f}, "
-                         f"Tilt angle: {tilt_angle_degrees:.2f}°"
-                         f"{orientation_str}"
-                         f"{apix_str}")
-            results.append(red_result)
-        
-        # If we have dual results, return them
-        if results:
-            return "\n".join(results)
-        
-        # Fallback to legacy single tilt info
+        # First check if we have ellipse tilt info (3+ peaks)
         tilt_info = tilt_info_storage.get()
         if tilt_info is not None:
             # Check if we have the new format with orientation (5 elements)
@@ -5227,83 +5215,64 @@ def server(input: Inputs, output: Outputs, session: Session):
                 small_axis, large_axis, tilt_angle, untilted_apix, orientation_theta = tilt_info
                 tilt_angle_degrees = math.degrees(tilt_angle)
                 orientation_degrees = math.degrees(orientation_theta)
-                
+
                 apix_str = ""
                 if untilted_apix is not None:
-                    apix_str = f", Estimated untilted apix: {untilted_apix:.3f} Å/px"
-                
-                return (f"Minor axis: {small_axis:.2f}, "
-                       f"Major axis: {large_axis:.2f}, "
-                       f"Tilt angle: {tilt_angle_degrees:.2f}°, "
+                    apix_str = f"\nUntilted Apix: {untilted_apix:.4f} Å/px"
+
+                return (f"Ellipse fitted:\n"
+                       f"Minor axis: {small_axis:.2f} px\n"
+                       f"Major axis: {large_axis:.2f} px\n"
+                       f"Tilt angle: {tilt_angle_degrees:.2f}°\n"
                        f"Orientation: {orientation_degrees:.1f}°"
                        f"{apix_str}")
             # Check if we have the format with untilted apix (4 elements)
             elif len(tilt_info) >= 4:
                 small_axis, large_axis, tilt_angle, untilted_apix = tilt_info
                 tilt_angle_degrees = math.degrees(tilt_angle)
-                
+
                 apix_str = ""
                 if untilted_apix is not None:
-                    apix_str = f", Estimated untilted apix: {untilted_apix:.3f} Å/px"
-                
-                return (f"Minor axis: {small_axis:.2f}, "
-                       f"Major axis: {large_axis:.2f}, "
+                    apix_str = f"\nUntilted Apix: {untilted_apix:.4f} Å/px"
+
+                return (f"Ellipse fitted:\n"
+                       f"Minor axis: {small_axis:.2f} px\n"
+                       f"Major axis: {large_axis:.2f} px\n"
                        f"Tilt angle: {tilt_angle_degrees:.2f}°"
                        f"{apix_str}")
-            else:
-                # Legacy format
-                small_axis, large_axis, tilt_angle = tilt_info
-                tilt_angle_degrees = math.degrees(tilt_angle)
-                
-                # Calculate apix from large axis
+
+        # Check if we have 1-2 peaks (circle mode)
+        current_peaks = tuned_markers_storage.get()
+        if current_peaks and len(current_peaks) > 0:
+            # Get FFT display info
+            cached_fft = cached_fft_image.get()
+            calc_state = fft_calculation_state.get()
+
+            if cached_fft is not None and calc_state['region'] is not None:
+                fft_display_size = cached_fft.size[0]
+                region_size = calc_state['region'].size[0]
+                scale_factor = fft_display_size / region_size
+
+                # Calculate radius from first peak
+                peak_x, peak_y = current_peaks[0]
+                cx = cy = fft_display_size / 2
+                r_display = np.sqrt((peak_x - cx)**2 + (peak_y - cy)**2)
+                r_full = r_display / scale_factor
+
+                # Calculate apix from radius
                 resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
                 apix_str = ""
-                if resolution is not None and large_axis > 0:
-                    calculated_apix = (large_axis * resolution) / size
-                    if 0.01 <= calculated_apix <= 6.0:
-                        apix_str = f", Apix: {calculated_apix:.3f} Å/px"
-                
-                return (f"Small axis: {small_axis:.2f}, "
-                       f"Large axis: {large_axis:.2f}, "
-                       f"Estimated Tilt Angle: {tilt_angle_degrees:.2f}°"
+                if resolution is not None and r_full > 0:
+                    calculated_apix = (r_full * resolution) / region_size
+                    apix_str = f"\nCalculated Apix: {calculated_apix:.4f} Å/px"
+
+                return (f"Circle (need ≥3 peaks for ellipse):\n"
+                       f"Peaks: {len(current_peaks)}\n"
+                       f"Radius: {r_full:.2f} px"
                        f"{apix_str}")
-        
-        # Fallback: check fft_state for legacy tilt info
-        state = fft_state.get()
-        if state['tilt_info'] is not None:
-            # Legacy format from fft_state
-            small_axis, large_axis, tilt_angle = state['tilt_info']
-            tilt_angle_degrees = math.degrees(tilt_angle)
-            
-            # Calculate apix from large axis
-            resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
-            apix_str = ""
-            if resolution is not None and large_axis > 0:
-                calculated_apix = (large_axis * resolution) / size
-                if 0.01 <= calculated_apix <= 6.0:
-                    apix_str = f", Apix: {calculated_apix:.3f} Å/px"
-            
-            return (f"Small axis: {small_axis:.2f}, "
-                   f"Large axis: {large_axis:.2f}, "
-                   f"Estimated Tilt Angle: {tilt_angle_degrees:.2f}°"
-                   f"{apix_str}")
-        elif state['ellipse_params'] is not None:
-            # Show ellipse parameters when fitted but not yet estimated for tilt
-            a, b, theta = state['ellipse_params']
-            theta_degrees = math.degrees(theta)
-            
-            # Calculate apix from larger axis
-            resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
-            apix_str = ""
-            if resolution is not None:
-                large_axis = max(a, b)
-                calculated_apix = (large_axis * resolution) / size
-                if 0.01 <= calculated_apix <= 6.0:
-                    apix_str = f", Estimated Apix: {calculated_apix:.3f} Å/px"
-            
-            return (f"Ellipse fitted: a={a:.1f}, b={b:.1f}, θ={theta_degrees:.1f}°"
-                   f"{apix_str}")
-        return ""
+
+        # No peaks
+        return "No overlay - click to add peaks or use 'Detect Peaks'"
 
     @output
     @render.data_frame
