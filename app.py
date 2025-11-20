@@ -35,7 +35,8 @@ from compute import (
     get_image_with_binning,
     extract_region_no_binning,
     bin_image,
-    google_analytics
+    google_analytics,
+    detect_elliptical_distortion
 )
 # ---------- Documentation ----------
 """Magnification Calibration Tool
@@ -445,10 +446,11 @@ app_ui = ui.page_fillable(
                                     ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
                                     ui.input_action_button("tune_markers", "Autocorrect", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
                                     ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("detect_ellipse", "Detect Elliptical Distortion", class_="btn-primary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
+                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 340px; left: 10px; right: 10px; padding: 8px;"),
                                     # Tilt output - fixed position
                                     ui.div(
-                                        {"style": "position: absolute; top: 340px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
+                                        {"style": "position: absolute; top: 390px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
                                         ui.output_text("tilt_output"),
                                     ),
                                 )
@@ -1656,6 +1658,217 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"Updated UI with untilted apix: {untilted_apix:.3f} Å/px")
         
         print(f"Tilt information stored in separate storages")
+
+    @reactive.Effect
+    @reactive.event(input.detect_ellipse)
+    def _():
+        """Handle Detect Elliptical Distortion button click to automatically detect ellipse."""
+        print("\n=== Automatic Elliptical Distortion Detection ===")
+
+        # Get the current FFT calculation state
+        calc_state = fft_calculation_state.get()
+        if calc_state['region'] is None:
+            print("No FFT data available. Please calculate FFT first.")
+            return
+
+        # Get current apix and resolution
+        apix_value = get_apix()
+        resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+
+        if resolution is None:
+            print("No resolution selected. Please select a resolution type.")
+            return
+
+        print(f"Using apix: {apix_value:.4f} Å/px, resolution: {resolution:.3f} Å")
+
+        # Compute FFT magnitude from the region
+        region = calc_state['region']
+        arr = np.array(region.convert("L")).astype(np.float32)
+
+        print(f"Region size: {region.size} pixels")
+        print(f"Array shape: {arr.shape}")
+
+        # Compute FFT and get magnitude
+        f = np.fft.fft2(arr)
+        fshift = np.fft.fftshift(f)
+        fft_magnitude = np.abs(fshift)
+
+        # Calculate expected radius based on current apix
+        expected_radius = (arr.shape[0] * apix_value) / resolution
+        print(f"Expected radius for resolution {resolution:.3f}Å at apix {apix_value:.4f}: {expected_radius:.2f} pixels")
+
+        # Call the detection function
+        result = detect_elliptical_distortion(
+            fft_data=fft_magnitude,
+            apix=apix_value,
+            resolution=resolution,
+            pixel_band_width=10,
+            min_peaks=6
+        )
+
+        if result['success']:
+            # Store the ellipse parameters
+            a, b, theta = result['ellipse_params']
+            cx, cy = result['center']
+            detected_points = result['peak_points']
+
+            print(f"\n✅ Step 1: Peak Detection Complete")
+            print(f"   Found {result['n_peaks_used']} peaks in the resolution band")
+
+            # Store tilt information
+            small_axis = result['semi_minor_axis']
+            large_axis = result['semi_major_axis']
+            tilt_angle_rad = math.radians(result['tilt_angle_deg'])
+
+            # Calculate corrected apix based on the detected peak position
+            # The key insight: if the peak is at radius R in FFT space of a region of size S,
+            # then the relationship is: R = (S * apix) / resolution
+            # Therefore: apix = (R * resolution) / S
+            #
+            # However, we need to use the REGION size (the cropped area), not the cached FFT image size
+            region_size = region.size[0]  # Size of the cropped region used for FFT
+
+            # Calculate apix from the detected minor axis (untilted direction)
+            # This gives us the true pixel size of the original image
+            untilted_apix = (small_axis * resolution) / region_size
+
+            print(f"\n✅ Step 2: Ellipse Fitting Complete")
+            print(f"   Semi-major axis: {large_axis:.2f} pixels")
+            print(f"   Semi-minor axis: {small_axis:.2f} pixels")
+            print(f"   Eccentricity: {result['eccentricity']:.4f}")
+            print(f"   Tilt angle: {result['tilt_angle_deg']:.1f}°")
+            print(f"   Rotation angle: {result['rotation_angle_deg']:.1f}°")
+
+            # Calculate major axis angle (orientation of ellipse)
+            if a >= b:
+                major_axis_angle = theta
+            else:
+                major_axis_angle = theta + math.pi/2
+
+            # Normalize angle to [-π/2, π/2]
+            while major_axis_angle > math.pi/2:
+                major_axis_angle -= math.pi
+            while major_axis_angle < -math.pi/2:
+                major_axis_angle += math.pi
+
+            # Store tilt information
+            tilt_info = (small_axis, large_axis, tilt_angle_rad, untilted_apix, major_axis_angle)
+            tilt_info_red_storage.set(tilt_info)  # Store as red (auto-detected)
+            tilt_info_storage.set(tilt_info)
+
+            # Store ellipse parameters for display
+            ellipse_params_storage.set((a, b, theta))
+
+            # Update fft_state with detected ellipse
+            current_state = fft_state.get()
+            current_state['ellipse_params'] = (a, b, theta)
+            fft_state.set(current_state)
+
+            # Update the lattice points storage with detected peaks
+            tuned_markers_storage.set(detected_points)
+
+            # Update FFT widget: replace cyan circle with fitted ellipse + add peak markers
+            fft_widget_instance = fft_widget.get()
+            cached_fft = cached_fft_image.get()
+
+            print(f"\n✅ Step 3: Updating Visualization")
+            if fft_widget_instance is not None and cached_fft is not None:
+                # Calculate scale factor between full-resolution region and display FFT
+                fft_display_size = cached_fft.size[0]  # Display FFT image size (e.g., 400 pixels)
+                full_region_size = region_size  # Full region size (e.g., 2200 pixels)
+                scale_factor = fft_display_size / full_region_size
+
+                print(f"   Scaling overlay: {full_region_size}px → {fft_display_size}px (factor: {scale_factor:.4f})")
+
+                # Scale ellipse parameters to display coordinates
+                a_scaled = a * scale_factor
+                b_scaled = b * scale_factor
+                cx_scaled = cx * scale_factor
+                cy_scaled = cy * scale_factor
+
+                # Create ellipse shape in scaled coordinates (parametric)
+                t = np.linspace(0, 2*np.pi, 100)
+                x_ellipse = a_scaled * np.cos(t)
+                y_ellipse = b_scaled * np.sin(t)
+                x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
+                y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
+
+                # Convert to SVG path for shape
+                ellipse_path_x = cx_scaled + x_rot
+                ellipse_path_y = cy_scaled + y_rot
+
+                # Scale detected peak positions to display coordinates
+                peak_xs_scaled = [pt[0] * scale_factor for pt in detected_points]
+                peak_ys_scaled = [pt[1] * scale_factor for pt in detected_points]
+
+                with fft_widget_instance.batch_update():
+                    # Remove any existing auto peak markers
+                    traces_to_remove = []
+                    for i, trace in enumerate(fft_widget_instance.data):
+                        if hasattr(trace, 'name') and trace.name and trace.name == 'auto_peaks':
+                            traces_to_remove.append(i)
+
+                    # Remove from end to avoid index shifting
+                    for i in reversed(traces_to_remove):
+                        fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+
+                    # Add peak markers (green outline only, no fill)
+                    fft_widget_instance.add_scatter(
+                        x=peak_xs_scaled,
+                        y=peak_ys_scaled,
+                        mode='markers',
+                        marker=dict(
+                            color='rgba(0,0,0,0)',  # Transparent fill
+                            size=10,
+                            symbol='circle',
+                            line=dict(color='lime', width=2)  # Green outline only
+                        ),
+                        name='auto_peaks',
+                        hoverinfo='text',
+                        hovertext=[f"Peak {i+1}" for i in range(len(peak_xs_scaled))],
+                        showlegend=False
+                    )
+
+                    # Replace the cyan circle with the fitted ellipse (dotted line)
+                    # Create new ellipse shape (replaces all existing shapes)
+                    ellipse_shape = {
+                        'type': 'path',
+                        'path': f'M {ellipse_path_x[0]},{ellipse_path_y[0]} ' +
+                                ' '.join([f'L {x},{y}' for x, y in zip(ellipse_path_x[1:], ellipse_path_y[1:])]) + ' Z',
+                        'line': {'color': 'cyan', 'width': 2, 'dash': 'longdash'},  # dashed line
+                        'layer': 'above',
+                        'fillcolor': 'rgba(0,0,0,0)'  # Transparent fill
+                    }
+
+                    fft_widget_instance.layout.shapes = [ellipse_shape]
+
+                print(f"   ✓ Updated cyan circle → fitted ellipse")
+                print(f"   ✓ Added {len(detected_points)} peak markers")
+            else:
+                print(f"   ⚠️  FFT widget or cached FFT not available for overlay")
+
+            # Update apix in UI
+            print(f"\n✅ Step 4: Updating Apix")
+            print(f"   Region size: {region_size} pixels")
+            print(f"   Minor axis radius: {small_axis:.2f} pixels")
+            print(f"   Resolution: {resolution:.3f} Å")
+            print(f"   Calculated apix: {untilted_apix:.4f} Å/px")
+
+            if 0.01 <= untilted_apix <= 6.0:
+                ui.update_slider("apix_slider", value=untilted_apix, session=session)
+                ui.update_text("apix_exact_str", value=str(round(untilted_apix, 3)), session=session)
+                print(f"   ✓ Apix slider updated to {untilted_apix:.4f} Å/px")
+            else:
+                print(f"   ⚠️  Calculated apix {untilted_apix:.4f} is outside valid range [0.01, 6.0]")
+
+            print(f"\n{'='*60}")
+            print(f"🎉 Elliptical Distortion Detection Complete!")
+            print(f"{'='*60}")
+
+        else:
+            print(f"\n❌ Ellipse detection failed: {result.get('error_message', 'Unknown error')}")
+            if result.get('peak_points'):
+                print(f"   Found {len(result['peak_points'])} peaks (need at least 6)")
 
     # Remove click handler for 1D plot since we're using hover instead of static markers
     

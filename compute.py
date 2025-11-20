@@ -1902,4 +1902,173 @@ def estimate_best_apix_from_nufft(
             "res_grid": np.array([target_resolution]),
             "n_r": r_samples,
             "n_theta": theta_samples
-        } 
+        }
+
+
+def detect_elliptical_distortion(fft_data: np.ndarray, apix: float, resolution: float,
+                                 pixel_band_width: int = 10, min_peaks: int = 6) -> dict:
+    """
+    Automatically detect elliptical distortion in FFT by finding local maxima around a resolution band.
+
+    Args:
+        fft_data: 2D FFT magnitude array (already shifted to center)
+        apix: Pixel size in Å/pixel
+        resolution: Target resolution in Angstroms
+        pixel_band_width: Width of band in pixels to search for peaks (default ±10 pixels)
+        min_peaks: Minimum number of peaks required to fit ellipse (default 6)
+
+    Returns:
+        Dictionary containing:
+            - 'success': bool - whether ellipse was successfully detected
+            - 'ellipse_params': tuple (a, b, theta) - semi-major, semi-minor axis, rotation angle
+            - 'peak_points': list of (x, y) peak coordinates
+            - 'center': tuple (cx, cy) - center of FFT
+            - 'target_radius': float - expected radius for the resolution
+            - 'eccentricity': float - ellipse eccentricity
+            - 'tilt_angle_deg': float - tilt angle in degrees
+            - 'error_message': str - error message if failed
+    """
+    from scipy.ndimage import maximum_filter
+    from scipy.signal import find_peaks
+
+    # Get FFT center
+    cy, cx = np.array(fft_data.shape) // 2
+
+    # Calculate expected radius for the target resolution
+    image_size = fft_data.shape[0]
+    target_radius = resolution_to_radius(resolution, image_size, apix)
+
+    # Define inner and outer radius for the search band
+    r_inner = target_radius - pixel_band_width
+    r_outer = target_radius + pixel_band_width
+
+    print(f"Ellipse detection parameters:")
+    print(f"  Target resolution: {resolution:.3f} Å")
+    print(f"  Target radius: {target_radius:.2f} pixels")
+    print(f"  Search band: {r_inner:.2f} - {r_outer:.2f} pixels")
+    print(f"  Band width: ±{pixel_band_width} pixels")
+
+    # Create coordinate arrays
+    y_coords, x_coords = np.ogrid[:fft_data.shape[0], :fft_data.shape[1]]
+    y_centered = y_coords - cy
+    x_centered = x_coords - cx
+
+    # Calculate radial distance from center
+    r_dist = np.sqrt(x_centered**2 + y_centered**2)
+
+    # Create mask for the annular band
+    band_mask = (r_dist >= r_inner) & (r_dist <= r_outer)
+
+    if not np.any(band_mask):
+        return {
+            'success': False,
+            'error_message': f'No pixels found in band {r_inner:.2f}-{r_outer:.2f} pixels',
+            'peak_points': [],
+            'center': (cx, cy),
+            'target_radius': target_radius
+        }
+
+    print(f"  Pixels in search band: {np.sum(band_mask)}")
+
+    # Apply local maximum filter to find peaks
+    # Use a footprint of 5x5 to find local maxima
+    footprint_size = 5
+    local_max = maximum_filter(fft_data, size=footprint_size)
+
+    # Find points that are local maxima AND in the band
+    is_peak = (fft_data == local_max) & band_mask
+
+    # Get peak coordinates and intensities
+    peak_coords = np.argwhere(is_peak)
+    peak_intensities = fft_data[is_peak]
+
+    print(f"  Initial peaks found: {len(peak_coords)}")
+
+    if len(peak_coords) < min_peaks:
+        return {
+            'success': False,
+            'error_message': f'Only found {len(peak_coords)} peaks, need at least {min_peaks}',
+            'peak_points': [],
+            'center': (cx, cy),
+            'target_radius': target_radius
+        }
+
+    # Sort peaks by intensity and keep the strongest ones
+    # Keep at least min_peaks, but allow more if they're strong
+    sorted_indices = np.argsort(peak_intensities)[::-1]
+
+    # Use top peaks (at least min_peaks, but up to 2x if intensity is > 50% of max)
+    max_intensity = peak_intensities[sorted_indices[0]]
+    threshold = max_intensity * 0.5
+
+    # Take at least min_peaks, or more if they're above threshold
+    n_peaks_to_use = min_peaks
+    for i in range(min_peaks, len(sorted_indices)):
+        if peak_intensities[sorted_indices[i]] > threshold:
+            n_peaks_to_use = i + 1
+        else:
+            break
+
+    # Cap at reasonable number (e.g., 20 peaks)
+    n_peaks_to_use = min(n_peaks_to_use, 20)
+
+    selected_indices = sorted_indices[:n_peaks_to_use]
+    selected_peaks = peak_coords[selected_indices]
+
+    print(f"  Selected peaks: {len(selected_peaks)}")
+    print(f"  Intensity threshold: {threshold:.2f} (50% of max {max_intensity:.2f})")
+
+    # Convert to (x, y) coordinates centered at FFT center
+    peak_points = []
+    for peak in selected_peaks:
+        y, x = peak
+        peak_points.append((x - cx, y - cy))
+
+    # Fit ellipse using the existing fit_ellipse_fixed_center function
+    try:
+        a, b, theta = fit_ellipse_fixed_center(peak_points, center=(0, 0))
+
+        # Calculate eccentricity
+        if a > b:
+            eccentricity = np.sqrt(1 - (b**2 / a**2))
+            # Calculate tilt angle from semi-axes
+            tilt_angle_rad = calculate_tilt_angle(b, a)
+        else:
+            eccentricity = np.sqrt(1 - (a**2 / b**2))
+            tilt_angle_rad = calculate_tilt_angle(a, b)
+
+        tilt_angle_deg = np.degrees(tilt_angle_rad)
+
+        print(f"  Ellipse fitted successfully:")
+        print(f"    Semi-major axis: {max(a, b):.2f} pixels")
+        print(f"    Semi-minor axis: {min(a, b):.2f} pixels")
+        print(f"    Rotation angle: {np.degrees(theta):.1f}°")
+        print(f"    Eccentricity: {eccentricity:.4f}")
+        print(f"    Tilt angle: {tilt_angle_deg:.1f}°")
+
+        # Convert peak points back to image coordinates for visualization
+        peak_points_image = [(x + cx, y + cy) for x, y in peak_points]
+
+        return {
+            'success': True,
+            'ellipse_params': (a, b, theta),
+            'peak_points': peak_points_image,
+            'center': (cx, cy),
+            'target_radius': target_radius,
+            'eccentricity': eccentricity,
+            'tilt_angle_deg': tilt_angle_deg,
+            'semi_major_axis': max(a, b),
+            'semi_minor_axis': min(a, b),
+            'rotation_angle_deg': np.degrees(theta),
+            'n_peaks_used': len(selected_peaks)
+        }
+
+    except Exception as e:
+        print(f"  Ellipse fitting failed: {e}")
+        return {
+            'success': False,
+            'error_message': f'Ellipse fitting failed: {str(e)}',
+            'peak_points': [(x + cx, y + cy) for x, y in peak_points],
+            'center': (cx, cy),
+            'target_radius': target_radius
+        }
