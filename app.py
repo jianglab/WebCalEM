@@ -356,10 +356,14 @@ app_ui = ui.page_fillable(
             # Right column: FFT and Result cards stacked vertically
             # ui.div(
             #     {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
-            ui.card(
-                ui.card_header("FFT Analysis"),
-                ui.navset_tab(
-                    ui.nav_panel(
+            ui.div(
+                {"style": "height: 850px;"},
+                ui.card(
+                    ui.card_header("FFT Analysis"),
+                    ui.div(
+                        {"style": "height: 750px; overflow: hidden;"},
+                        ui.navset_tab(
+                            ui.nav_panel(
                         ui.tooltip(
                             "1D Radial Profile",
                             "Radially averaged power spectrum analysis with NuFFT interpolation for enhanced resolution detection",
@@ -420,24 +424,25 @@ app_ui = ui.page_fillable(
                         "2D Spectrum",
                         ui.div(
                             {"style": "height: 100%; display: flex; flex-direction: row; gap: 8px;"},
-                            #{"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
-                            # FFT display
-                            #ui.div(
-                            #     {"style": "flex: 1; min-height: 0;"},
-                            output_widget("fft_with_circle"),
-                            #),
-                            # Controls below the image
+                            # FFT display - flex: 1 to take all available space
                             ui.div(
-                                #{"style": "padding: 10px; display: flex; gap: 10px; align-items: center;"},
-                                {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 300px; gap:10px; padding: 5px; flex-shrink: 0;"},
+                                {"style": "flex: 1; min-height: 0; display: flex; align-items: stretch; justify-content: stretch; width: 100%;"},
+                                ui.div(
+                                    {"style": "width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;"},
+                                    output_widget("fft_with_circle")
+                                )
+                            ),
+                            # Controls on the right
+                            ui.div(
+                                {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 270px; gap:8px; padding: 8px; flex-shrink: 0;"},
                                 ui.div(
                                     {"style": "flex: 0;"},
                                     ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1, width="100%")
                                 ),
-                                ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0;"),
-                                ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
+                                ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0; width: 100%;"),
+                                ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0; width: 100%;"),
                                 ui.div(
-                                    {"style": "margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 5px; font-size: 0.9em;"},
+                                    {"style": "margin-top: 8px; padding: 6px; background-color: #f8f9fa; border-radius: 5px; font-size: 1em; line-height: 1.3; overflow-wrap: break-word; word-break: break-word;"},
                                     ui.output_text("tilt_output")
                                 )
                             )
@@ -488,9 +493,11 @@ app_ui = ui.page_fillable(
                     #         )
                     #     )
                     # )
-                ),
-                full_screen=True,
-                #style="flex: 1; min-height: 400px;"
+                        )
+                    ),
+                    full_screen=True,
+                    #style="flex: 1; min-height: 400px;"
+                )
             ),
                 # Result card (bottom)
             ui.card(
@@ -2903,34 +2910,25 @@ def server(input: Inputs, output: Outputs, session: Session):
 
 
         # Hide axes but keep them functional for events
-        fig.update_xaxes(visible=False)
-        fig.update_yaxes(visible=False)
+        fig.update_xaxes(visible=False, scaleanchor="y", scaleratio=1, constrain="domain")
+        fig.update_yaxes(visible=False, constrain="domain")
 
-        # Set layout with square aspect ratio and click events enabled
-        fig.update_layout(
-            autosize=True,
-            margin=dict(l=0, r=0, t=0, b=0),
-            plot_bgcolor="white",
-            dragmode='pan',
-            title=None,
-            clickmode='event',
-            hovermode='closest',  # Snap to closest point for hover
-            hoverdistance=20  # Increase hover capture distance to ~20 pixels (catches clicks between grid points)
-        )
-        
-        # Force square display but allow arbitrary zoom box ratios
-        fig.update_xaxes(scaleanchor="y", scaleratio=1, constrain="domain")
-        fig.update_yaxes(constrain="domain")
-
-        # Note: All shapes (circles, measurements, lattice points) are now handled by 
+        # Note: All shapes (circles, measurements, lattice points) are now handled by
         # separate overlay effects to avoid re-rendering base FFT on state changes
-        
-        # Configure interactive layout
+
+        # Configure interactive layout - consolidated settings
         fig.update_layout(
-            height=None,  # Allow natural sizing like original image
-            margin=dict(l=10, r=10, t=10, b=10),  # Minimal margins
-            autosize=True,
+            height=750,  # Fixed height to fill card vertically
+            width=750,   # Fixed width equal to height for square display
+            autosize=False,  # Disable autosize to use fixed dimensions
+            margin=dict(l=5, r=5, t=5, b=5),  # Minimal margins
+            plot_bgcolor="white",
             dragmode='zoom',  # Keep zoom mode as default
+            title=None,
+            clickmode='event',  # Enable click events
+            hovermode='closest',  # Snap to closest point for hover
+            hoverdistance=20,  # Increase hover capture distance to ~20 pixels (catches clicks between grid points)
+            uirevision="fft-widget-stable",  # Use stable uirevision to prevent unnecessary re-renders
             modebar=dict(
                 add=[ 'zoom', 'pan', 'reset+autorange'],
                 remove=['select2d', 'lasso2d'],
@@ -2938,11 +2936,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 color='black',
                 activecolor='red'
             ),
-            # Use stable uirevision to prevent unnecessary re-renders
-            uirevision="fft-widget-stable",
-            # Enable click events
-            clickmode='event',
-            hovermode='closest',
             # Configure newshape for line drawing
             newshape=dict(
                 line_color='red',
@@ -2950,7 +2943,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 fillcolor='rgba(255,0,0,0.1)',
                 drawdirection='diagonal',
                 layer='above'
-            ),
+            )
         )
         
         
@@ -3391,23 +3384,26 @@ def server(input: Inputs, output: Outputs, session: Session):
                 return
             
             # Get current parameters for NuFFT calculation - use NOMINAL apix only
-            # During startup race condition: use stored value if UI hasn't synced yet
-            # After that: always use UI input (allows manual user changes)
-            input_apix = float(input.nominal_apix()) if input.nominal_apix() else 1.0
+            # Always prefer stored value first, then UI input as fallback
             stored_apix = float(nominal_apix_value.get())
+            input_apix = float(input.nominal_apix()) if input.nominal_apix() else None
             ui_synced = nominal_apix_ui_synced.get()
 
-            if not ui_synced:
-                # UI hasn't synced yet (startup race condition), use stored value
+            # Use stored value if available (set during image load), otherwise use UI input
+            if stored_apix > 0:
                 current_apix = stored_apix
-                # Mark as synced now so future calculations use UI input
-                nominal_apix_ui_synced.set(True)
-                print(f"   📏 USING nominal_apix from stored value (UI not synced yet): {current_apix}")
-            else:
-                # UI is synced, use whatever user has set
+                # Mark as synced so future manual changes to UI are respected
+                if not ui_synced:
+                    nominal_apix_ui_synced.set(True)
+                print(f"   📏 USING nominal_apix from stored value: {current_apix}")
+            elif input_apix and input_apix > 0:
                 current_apix = input_apix
-                print(f"   📏 USING nominal_apix from UI input (synced): {current_apix}")
-            print(f"   📏 (input={input_apix}, stored={stored_apix}, ui_synced={ui_synced})")
+                print(f"   📏 USING nominal_apix from UI input: {current_apix}")
+            else:
+                # No valid apix available yet, skip calculation
+                print(f"   ❌ No valid nominal_apix available (stored={stored_apix}, input={input_apix}), skipping")
+                return
+            print(f"   📏 (stored={stored_apix}, input={input_apix}, ui_synced={ui_synced})")
 
             # Get target resolution and create ±10% range around it
             target_resolution, _ = get_resolution_info(calc_state['resolution_type'], calc_state['custom_resolution'])
