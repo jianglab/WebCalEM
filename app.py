@@ -428,6 +428,7 @@ app_ui = ui.page_fillable(
                                 # Controls below the image
                                 ui.div(
                                     {"style": "padding: 10px; display: flex; gap: 10px; align-items: center;"},
+                                    ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0;"),
                                     ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
                                     ui.div(
                                         {"style": "flex: 1;"},
@@ -1801,7 +1802,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                             color='rgba(0,0,0,0)',  # Transparent fill
                             size=10,
                             symbol='circle',
-                            line=dict(color='lime', width=2)  # Green outline only
+                            line=dict(color='lime', width=1)  # Green outline only
                         ),
                         name='auto_peaks',
                         hoverinfo='text',
@@ -1849,6 +1850,61 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"\n❌ Ellipse detection failed: {result.get('error_message', 'Unknown error')}")
             if result.get('peak_points'):
                 print(f"   Found {len(result['peak_points'])} peaks (need at least 6)")
+
+    # Detect Peaks button handler
+    @reactive.Effect
+    @reactive.event(input.detect_peaks)
+    def _():
+        """Detect peaks around current cyan circle/ellipse and run auto-detection."""
+        print("\n🔍 Detect Peaks - searching around current overlay...")
+
+        # Get current peaks to calculate search radius
+        current_peaks = list(tuned_markers_storage.get())
+        fft_widget_instance = fft_widget.get()
+        cached_fft = cached_fft_image.get()
+        calc_state = fft_calculation_state.get()
+
+        if cached_fft is None or calc_state['region'] is None:
+            print("❌ No FFT data available")
+            return
+
+        fft_display_size = cached_fft.size[0]
+        region_size = calc_state['region'].size[0]
+        scale_factor = fft_display_size / region_size
+
+        # Determine target radius for search
+        if len(current_peaks) >= 1:
+            # Use average radius of existing peaks
+            cx = cy = fft_display_size / 2
+            radii = [np.sqrt((px - cx)**2 + (py - cy)**2) for px, py in current_peaks]
+            avg_radius_display = np.mean(radii)
+            target_radius_full = avg_radius_display / scale_factor
+            print(f"  Using average radius from {len(current_peaks)} peaks: {avg_radius_display:.1f}px (display)")
+        else:
+            # Use nominal apix to calculate expected radius
+            apix_value = float(input.nominal_apix()) if input.nominal_apix() else get_apix()
+            resolution, _ = get_resolution_info(input.resolution_type(), input.custom_resolution())
+
+            if resolution is None:
+                print("❌ No resolution selected")
+                return
+
+            target_radius_full = (region_size * apix_value) / resolution
+            print(f"  Using nominal apix {apix_value:.4f} → radius: {target_radius_full:.1f}px (full-res)")
+
+        # Convert target radius to resolution for detection
+        target_resolution = (region_size * get_apix()) / target_radius_full
+
+        print(f"  Target resolution: {target_resolution:.3f} Å")
+        print(f"  Search band: ±10 pixels around radius {target_radius_full:.1f}px")
+
+        # Run the detection function (reuse existing logic)
+        try:
+            run_ellipse_detection()
+        except Exception as e:
+            print(f"❌ Detection failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Clear Overlay button handler
     @reactive.Effect
@@ -3060,7 +3116,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         shape_to_draw = {
                             'type': 'circle',
                             'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
-                            'line': {'color': 'cyan', 'width': 2, 'dash': 'dot'},
+                            'line': {'color': 'cyan', 'width': 2, 'dash': 'longdash'},
                             'layer': 'above',
                             'fillcolor': 'rgba(0,0,0,0)'
                         }
@@ -3094,7 +3150,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                                 'type': 'path',
                                 'path': f'M {ellipse_path_x[0]},{ellipse_path_y[0]} ' +
                                         ' '.join([f'L {x},{y}' for x, y in zip(ellipse_path_x[1:], ellipse_path_y[1:])]) + ' Z',
-                                'line': {'color': 'cyan', 'width': 2, 'dash': 'dot'},
+                                'line': {'color': 'cyan', 'width': 2, 'dash': 'longdash'},
                                 'layer': 'above',
                                 'fillcolor': 'rgba(0,0,0,0)'
                             }
@@ -3107,30 +3163,38 @@ def server(input: Inputs, output: Outputs, session: Session):
                     fft_widget_instance = fft_widget.get()
                     if fft_widget_instance is not None:
                         with fft_widget_instance.batch_update():
-                            # Remove old peak markers
-                            traces_to_remove = []
+                            # Find existing peak trace and update in-place (no remove/add)
+                            peak_trace_idx = None
                             for i, tr in enumerate(fft_widget_instance.data):
                                 if hasattr(tr, 'name') and tr.name == 'auto_peaks':
-                                    traces_to_remove.append(i)
-                            for i in reversed(traces_to_remove):
-                                fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+                                    peak_trace_idx = i
+                                    break
 
-                            # Add updated peak markers
                             if len(current_peaks) > 0:
-                                fft_widget_instance.add_scatter(
-                                    x=[p[0] for p in current_peaks],
-                                    y=[p[1] for p in current_peaks],
-                                    mode='markers',
-                                    marker=dict(
-                                        color='rgba(0,0,0,0)',
-                                        size=8,
-                                        symbol='circle',
-                                        line=dict(color='lime', width=2)
-                                    ),
-                                    name='auto_peaks',
-                                    hoverinfo='skip',
-                                    showlegend=False
-                                )
+                                if peak_trace_idx is not None:
+                                    # Update existing trace in-place (much faster, no flicker)
+                                    fft_widget_instance.data[peak_trace_idx].x = [p[0] for p in current_peaks]
+                                    fft_widget_instance.data[peak_trace_idx].y = [p[1] for p in current_peaks]
+                                else:
+                                    # First time - add the trace
+                                    fft_widget_instance.add_scatter(
+                                        x=[p[0] for p in current_peaks],
+                                        y=[p[1] for p in current_peaks],
+                                        mode='markers',
+                                        marker=dict(
+                                            color='rgba(0,0,0,0)',
+                                            size=8,
+                                            symbol='circle',
+                                            line=dict(color='lime', width=2)
+                                        ),
+                                        name='auto_peaks',
+                                        hoverinfo='skip',
+                                        showlegend=False
+                                    )
+                            else:
+                                # No peaks - remove trace if it exists
+                                if peak_trace_idx is not None:
+                                    fft_widget_instance.data = fft_widget_instance.data[:peak_trace_idx] + fft_widget_instance.data[peak_trace_idx+1:]
 
                             # Update shape
                             if shape_to_draw is not None:
@@ -3138,7 +3202,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                             else:
                                 fft_widget_instance.layout.shapes = []
 
-                        print(f"  ✅ Updated {len(current_peaks)} peaks + shape in single batch")
+                        print(f"  ✅ Updated {len(current_peaks)} peaks + shape (in-place, no flicker)")
 
         # Attach click handler to scatter trace (index 1) instead of heatmap
         # The scatter trace covers the whole image and can capture click coordinates
@@ -3417,11 +3481,13 @@ def server(input: Inputs, output: Outputs, session: Session):
         else:
             print("No FFT widget or region available for contrast update")
 
+    # DISABLED - This effect was for old lattice point mode which is no longer used
     # Effect to update overlays when lattice points, mode, or ellipse parameters change
-    @reactive.Effect
-    @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage, tuned_markers_storage, tuned_resolution_radius)
-    def _():
-        """Update FFT overlays when lattice points, tuned markers, tuned resolution, or mode changes."""
+    # @reactive.Effect
+    # @reactive.event(lattice_points_storage, current_mode_storage, ellipse_params_storage, tuned_markers_storage, tuned_resolution_radius)
+    def _disabled_old_overlay_effect():
+        """DISABLED - Update FFT overlays when lattice points, tuned markers, tuned resolution, or mode changes."""
+        return  # Disabled
         # print("Updating FFT overlays for lattice points or mode change")
         
         widget = fft_widget.get()
