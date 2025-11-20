@@ -419,40 +419,20 @@ app_ui = ui.page_fillable(
                         ui.nav_panel(
                             "2D Spectrum",
                             ui.div(
-                                {"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
-                                # Left side: FFT display
-                                output_widget("fft_with_circle"),
-                                # ui.div(
-                                #     {"style": "width: 100%; height: 100%;"},
-                                #     output_widget("fft_with_circle")
-                                # ),
-                                # Right side: Controls arranged with fixed positioning
+                                {"style": "height: 100%; display: flex; flex-direction: column; gap: 8px;"},
+                                # FFT display
                                 ui.div(
-                                    {"style": "position: relative; background-color: #f8f9fa; border-radius: 8px; height: 450px; width: 250px; flex-shrink: 1; overflow: hidden;"},
-                                    # Label Type dropdown - fixed position
+                                    {"style": "flex: 1; min-height: 0;"},
+                                    output_widget("fft_with_circle")
+                                ),
+                                # Controls below the image
+                                ui.div(
+                                    {"style": "padding: 10px; display: flex; gap: 10px; align-items: center;"},
+                                    ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
                                     ui.div(
-                                        {"style": "position: absolute; top: 10px; left: 10px; right: 10px;"},
-                                        ui.input_select("label_mode", "", 
-                                            choices=["Resolution Ring", "Lattice Point"], 
-                                            selected="Resolution Ring")
-                                    ),
-                                    # FFT Range slider - fixed position
-                                    ui.div(
-                                        {"style": "position: absolute; top: 57px; left: 10px; right: 10px;"},
-                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1),
-                                    ),
-
-                                    # Buttons with fixed positions - well spaced
-                                    ui.input_action_button("clear_markers", "Clear Markers", class_="btn-secondary", style="position: absolute; top: 140px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("tune_markers", "Autocorrect", class_="btn-secondary", style="position: absolute; top: 190px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("fit_markers", "Fit Ellipse", class_="btn-secondary", style="position: absolute; top: 240px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("detect_ellipse", "Detect Elliptical Distortion", class_="btn-primary", style="position: absolute; top: 290px; left: 10px; right: 10px; padding: 8px;"),
-                                    ui.input_action_button("estimate_tilt", "Estimate Tilt", class_="btn-secondary", style="position: absolute; top: 340px; left: 10px; right: 10px; padding: 8px;"),
-                                    # Tilt output - fixed position
-                                    ui.div(
-                                        {"style": "position: absolute; top: 390px; left: 10px; right: 10px; font-size: 12px; color: #666; min-height: 20px;"},
-                                        ui.output_text("tilt_output"),
-                                    ),
+                                        {"style": "flex: 1;"},
+                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1, width="100%")
+                                    )
                                 )
                             )
                         ),
@@ -1659,10 +1639,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         
         print(f"Tilt information stored in separate storages")
 
-    @reactive.Effect
-    @reactive.event(input.detect_ellipse)
-    def _():
-        """Handle Detect Elliptical Distortion button click to automatically detect ellipse."""
+    # Helper function to run ellipse detection (can be called automatically or manually)
+    def run_ellipse_detection():
+        """Run automatic elliptical distortion detection and update visualization."""
         print("\n=== Automatic Elliptical Distortion Detection ===")
 
         # Get the current FFT calculation state
@@ -1764,9 +1743,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             current_state['ellipse_params'] = (a, b, theta)
             fft_state.set(current_state)
 
-            # Update the lattice points storage with detected peaks
-            tuned_markers_storage.set(detected_points)
-
             # Update FFT widget: replace cyan circle with fitted ellipse + add peak markers
             fft_widget_instance = fft_widget.get()
             cached_fft = cached_fft_image.get()
@@ -1800,6 +1776,10 @@ def server(input: Inputs, output: Outputs, session: Session):
                 # Scale detected peak positions to display coordinates
                 peak_xs_scaled = [pt[0] * scale_factor for pt in detected_points]
                 peak_ys_scaled = [pt[1] * scale_factor for pt in detected_points]
+
+                # Store peaks in DISPLAY coordinates for later click handling
+                scaled_peaks = [(x, y) for x, y in zip(peak_xs_scaled, peak_ys_scaled)]
+                tuned_markers_storage.set(scaled_peaks)
 
                 with fft_widget_instance.batch_update():
                     # Remove any existing auto peak markers
@@ -1869,6 +1849,48 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"\n❌ Ellipse detection failed: {result.get('error_message', 'Unknown error')}")
             if result.get('peak_points'):
                 print(f"   Found {len(result['peak_points'])} peaks (need at least 6)")
+
+    # Clear Overlay button handler
+    @reactive.Effect
+    @reactive.event(input.clear_overlay)
+    def _():
+        """Clear all overlays (peaks and ellipse) from 2D spectrum."""
+        print("\n🧹 Clearing all overlays...")
+
+        # Clear peak storage
+        tuned_markers_storage.set([])
+
+        # Clear ellipse from widget
+        fft_widget_instance = fft_widget.get()
+        if fft_widget_instance is not None:
+            with fft_widget_instance.batch_update():
+                # Remove peak markers
+                traces_to_remove = []
+                for i, tr in enumerate(fft_widget_instance.data):
+                    if hasattr(tr, 'name') and tr.name == 'auto_peaks':
+                        traces_to_remove.append(i)
+                for i in reversed(traces_to_remove):
+                    fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+
+                # Remove all shapes (ellipse/circle)
+                fft_widget_instance.layout.shapes = []
+
+        print("✅ All overlays cleared")
+
+    # Auto-trigger ellipse detection when FFT widget is created/updated
+    @reactive.Effect
+    @reactive.event(fft_widget)
+    def _():
+        """Auto-trigger ellipse detection when FFT widget is created."""
+        # Only auto-trigger if we have the widget and FFT data
+        if fft_widget.get() is not None and cached_fft_image.get() is not None:
+            try:
+                print("\n🔄 Auto-triggering ellipse detection after widget creation...")
+                run_ellipse_detection()
+            except Exception as e:
+                print(f"⚠️  Auto-detection failed: {e}")
+                import traceback
+                traceback.print_exc()
 
     # Remove click handler for 1D plot since we're using hover instead of static markers
     
@@ -2786,9 +2808,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                 opacity=0,  # Completely transparent
                 color='rgba(0,0,0,0)'  # Valid transparent color
             ),
-            hoverinfo='skip',  # Enable hover for click events
+            hoverinfo='text',  # Enable hover text
             showlegend=False,
-            hovertemplate='<b>Apix:</b> %{customdata[1]:.4f}<extra></extra>',  # Shorter hover text
+            hovertemplate='<b>Apix:</b> %{customdata[1]:.4f} Å/px<extra></extra>',  # Show apix value
             customdata=np.column_stack([distances.flatten(), tentative_apix_array.flatten()])
         )
         fig.add_trace(scatter_trace)
@@ -2807,7 +2829,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             dragmode='pan',
             title=None,
             clickmode='event',
-            hovermode=False
+            hovermode='closest'  # Enable hover to show apix
         )
         
         # Force square display but allow arbitrary zoom box ratios
@@ -2959,87 +2981,171 @@ def server(input: Inputs, output: Outputs, session: Session):
                     # No need to add shapes directly here - it will be handled automatically
         
         # Attach the click callback to the scatter trace for backward compatibility
-        scatter_trace.on_click(update_point)
+        # DISABLED - now using heatmap click handler for peak add/remove
+        # scatter_trace.on_click(update_point)
 
-        # Add hover callback for resolution ring preview
-        def update_hover_ring(trace, points, state):
-            """Update resolution ring on hover to preview where it would be placed."""
-            # Get current mode dynamically
-            current_mode_now = current_mode_storage.get()
+        # Hover callback disabled - now only shows apix tooltip (no red circle for faster performance)
+        # def update_hover_ring(trace, points, state):
+        #     # Disabled to improve performance
+        #     pass
 
-            # Only show hover ring in Resolution Ring mode
-            if current_mode_now == 'Resolution Ring' and points.point_inds:
-                # Get the hover point coordinates
-                point_idx = points.point_inds[0]
-                hover_x = scatter_trace.x[point_idx]
-                hover_y = scatter_trace.y[point_idx]
+        # # Attach hover callback to scatter trace (DISABLED)
+        # scatter_trace.on_hover(update_hover_ring)
 
-                # Calculate radius directly from hover position (no local max search for speed)
-                N = fft_arr.shape[0]
-                cx = cy = N/2
-                r = ((hover_x-cx)**2 + (hover_y-cy)**2)**0.5
+        # Click handler: add/remove peaks and re-fit ellipse
+        def handle_figure_click(trace, points, selector):
+            """Handle clicks to add/remove peak markers and update ellipse fit."""
+            print(f"\n🖱️  Click detected! trace={trace}, points={points}, selector={selector}")
+            print(f"   Has xs: {hasattr(points, 'xs')}, Has ys: {hasattr(points, 'ys')}")
+            if hasattr(points, 'xs'):
+                print(f"   xs length: {len(points.xs) if points.xs else 0}")
+            if hasattr(points, 'ys'):
+                print(f"   ys length: {len(points.ys) if points.ys else 0}")
 
-                # Update hover ring position in place - use batch_update for atomic update
-                with fw.batch_update():
-                    # Find existing hover ring (RED dashed) by checking shapes
-                    hover_ring_idx = None
-                    for i, shape in enumerate(fw.layout.shapes):
-                        if (hasattr(shape, 'line') and
-                            hasattr(shape.line, 'dash') and shape.line.dash == 'dash' and
-                            hasattr(shape.line, 'color') and shape.line.color == 'red'):
-                            hover_ring_idx = i
-                            break
+            if hasattr(points, 'xs') and hasattr(points, 'ys') and len(points.xs) > 0:
+                click_x, click_y = points.xs[0], points.ys[0]
 
-                    if hover_ring_idx is not None:
-                        # Update all 4 properties atomically within batch_update
-                        hover_ring = fw.layout.shapes[hover_ring_idx]
-                        hover_ring.x0 = cx - r
-                        hover_ring.y0 = cy - r
-                        hover_ring.x1 = cx + r
-                        hover_ring.y1 = cy + r
-                    else:
-                        # Create new hover ring (first hover) - RED dashed with thin line
-                        hover_circle = {
+                print(f"\n=== Click at ({click_x:.1f}, {click_y:.1f}) ===")
+
+                # Get current peaks (stored in tuned_markers_storage from auto-detection)
+                current_peaks = list(tuned_markers_storage.get())
+
+                # Check if click is near an existing peak (within 10 pixels)
+                click_threshold = 10
+                peak_to_remove = None
+
+                for i, (px, py) in enumerate(current_peaks):
+                    distance = np.sqrt((px - click_x)**2 + (py - click_y)**2)
+                    if distance < click_threshold:
+                        peak_to_remove = i
+                        break
+
+                if peak_to_remove is not None:
+                    # Remove the peak
+                    removed_peak = current_peaks.pop(peak_to_remove)
+                    print(f"  Removed peak at ({removed_peak[0]:.1f}, {removed_peak[1]:.1f})")
+                    print(f"  Remaining peaks: {len(current_peaks)}")
+                else:
+                    # Add new peak
+                    current_peaks.append((click_x, click_y))
+                    print(f"  Added new peak at ({click_x:.1f}, {click_y:.1f})")
+                    print(f"  Total peaks: {len(current_peaks)}")
+
+                # Update storage
+                tuned_markers_storage.set(current_peaks)
+
+                # Single unified update for all cases (0, 1-2, or 3+ peaks)
+                cached_fft = cached_fft_image.get()
+                calc_state = fft_calculation_state.get()
+
+                if cached_fft is not None and calc_state['region'] is not None:
+                    fft_display_size = cached_fft.size[0]
+                    region_size = calc_state['region'].size[0]
+                    scale_factor = fft_display_size / region_size
+
+                    # Prepare shape based on number of peaks
+                    shape_to_draw = None
+
+                    if len(current_peaks) == 0:
+                        # No peaks - no shape
+                        shape_to_draw = None
+                        print(f"  ✓ No peaks, no shape")
+
+                    elif len(current_peaks) == 1 or len(current_peaks) == 2:
+                        # 1-2 peaks: Draw circle through first peak
+                        peak_x, peak_y = current_peaks[0]
+                        cx = cy = fft_display_size / 2
+                        r = np.sqrt((peak_x - cx)**2 + (peak_y - cy)**2)
+
+                        shape_to_draw = {
                             'type': 'circle',
                             'x0': cx-r, 'y0': cy-r, 'x1': cx+r, 'y1': cy+r,
-                            'line': {'color': 'red', 'width': 1, 'dash': 'dash'},
+                            'line': {'color': 'cyan', 'width': 2, 'dash': 'dot'},
                             'layer': 'above',
-                            'editable': False
+                            'fillcolor': 'rgba(0,0,0,0)'
                         }
-                        current_shapes = list(fw.layout.shapes) if fw.layout.shapes else []
-                        fw.layout.shapes = current_shapes + [hover_circle]
+                        print(f"  ✓ Circle through first peak (r={r:.1f}px)")
 
-        # Attach hover callback to scatter trace
-        scatter_trace.on_hover(update_hover_ring)
+                    elif len(current_peaks) >= 3:
+                        # 3+ peaks: Fit ellipse
+                        try:
+                            # Scale peaks from display to full resolution
+                            full_res_peaks = [(px / scale_factor, py / scale_factor) for px, py in current_peaks]
 
-        # Also attach a general click handler to the entire figure to capture clicks anywhere
-        def handle_figure_click(trace, points, selector):
-            """Handle clicks anywhere on the figure, not just on scatter points."""
-            if hasattr(points, 'xs') and hasattr(points, 'ys') and len(points.xs) > 0:
-                # Get the actual click coordinates from the event
-                click_x, click_y = points.xs[0], points.ys[0]
-                
-                # Get current mode dynamically
-                current_mode_now = current_mode_storage.get()
-                
-                # Only handle lattice point mode here (Resolution Ring is handled by scatter trace)
-                if current_mode_now == 'Lattice Point':
-                    # print(f"=== LATTICE POINT MODE (Figure Click) ===")
-                    # print(f"Raw click coordinates: x={click_x}, y={click_y}")
-                    
-                    # Snap to nearest grid point (multiples of 3)
-                    snapped_x = round(click_x / 3) * 3
-                    snapped_y = round(click_y / 3) * 3
-                    
-                    # Store the snapped lattice point
-                    current_points = lattice_points_storage.get()
-                    new_points = current_points + [(snapped_x, snapped_y)]
-                    lattice_points_storage.set(new_points)
-                    
-                    print(f"Added lattice point (snapped): ({snapped_x}, {snapped_y}). Total points: {len(new_points)}")
-        
-        # Attach general click handler to the figure widget
-        fw.data[0].on_click(handle_figure_click)  # Attach to heatmap trace
+                            # Fit ellipse in full resolution space
+                            cy_full, cx_full = region_size / 2, region_size / 2
+                            a, b, theta = fit_ellipse_fixed_center(full_res_peaks, center=(cx_full, cy_full))
+
+                            # Scale back to display coordinates
+                            a_scaled = a * scale_factor
+                            b_scaled = b * scale_factor
+                            cx_scaled = cx_full * scale_factor
+                            cy_scaled = cy_full * scale_factor
+
+                            t = np.linspace(0, 2*np.pi, 100)
+                            x_ellipse = a_scaled * np.cos(t)
+                            y_ellipse = b_scaled * np.sin(t)
+                            x_rot = x_ellipse * np.cos(theta) - y_ellipse * np.sin(theta)
+                            y_rot = x_ellipse * np.sin(theta) + y_ellipse * np.cos(theta)
+                            ellipse_path_x = cx_scaled + x_rot
+                            ellipse_path_y = cy_scaled + y_rot
+
+                            shape_to_draw = {
+                                'type': 'path',
+                                'path': f'M {ellipse_path_x[0]},{ellipse_path_y[0]} ' +
+                                        ' '.join([f'L {x},{y}' for x, y in zip(ellipse_path_x[1:], ellipse_path_y[1:])]) + ' Z',
+                                'line': {'color': 'cyan', 'width': 2, 'dash': 'dot'},
+                                'layer': 'above',
+                                'fillcolor': 'rgba(0,0,0,0)'
+                            }
+                            print(f"  ✓ Fitted ellipse: a={a:.1f}, b={b:.1f}, θ={np.degrees(theta):.1f}°")
+                        except Exception as e:
+                            print(f"  ⚠️  Ellipse fitting failed: {e}")
+                            shape_to_draw = None
+
+                    # Single batch update for both peaks and shape
+                    fft_widget_instance = fft_widget.get()
+                    if fft_widget_instance is not None:
+                        with fft_widget_instance.batch_update():
+                            # Remove old peak markers
+                            traces_to_remove = []
+                            for i, tr in enumerate(fft_widget_instance.data):
+                                if hasattr(tr, 'name') and tr.name == 'auto_peaks':
+                                    traces_to_remove.append(i)
+                            for i in reversed(traces_to_remove):
+                                fft_widget_instance.data = fft_widget_instance.data[:i] + fft_widget_instance.data[i+1:]
+
+                            # Add updated peak markers
+                            if len(current_peaks) > 0:
+                                fft_widget_instance.add_scatter(
+                                    x=[p[0] for p in current_peaks],
+                                    y=[p[1] for p in current_peaks],
+                                    mode='markers',
+                                    marker=dict(
+                                        color='rgba(0,0,0,0)',
+                                        size=8,
+                                        symbol='circle',
+                                        line=dict(color='lime', width=2)
+                                    ),
+                                    name='auto_peaks',
+                                    hoverinfo='skip',
+                                    showlegend=False
+                                )
+
+                            # Update shape
+                            if shape_to_draw is not None:
+                                fft_widget_instance.layout.shapes = [shape_to_draw]
+                            else:
+                                fft_widget_instance.layout.shapes = []
+
+                        print(f"  ✅ Updated {len(current_peaks)} peaks + shape in single batch")
+
+        # Attach click handler to scatter trace (index 1) instead of heatmap
+        # The scatter trace covers the whole image and can capture click coordinates
+        scatter_trace.on_click(handle_figure_click)
+
+        # Also try attaching to heatmap as fallback
+        fw.data[0].on_click(handle_figure_click)
 
         # Store the widget for in-place overlay updates (ellipse, etc.)
         fft_widget.set(fw)
