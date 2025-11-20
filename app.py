@@ -354,170 +354,191 @@ app_ui = ui.page_fillable(
                 full_screen=True,
             ),
             # Right column: FFT and Result cards stacked vertically
-            ui.div(
-                {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
-                ui.card(
-                    ui.card_header("FFT Analysis"),
-                    ui.navset_tab(
-                        ui.nav_panel(
-                            ui.tooltip(
-                                "1D Radial Profile",
-                                "Radially averaged power spectrum analysis with NuFFT interpolation for enhanced resolution detection",
-                                placement="top"
+            # ui.div(
+            #     {"style": "display: flex; flex-direction: column; gap: 8px; height: 100%;"},
+            ui.card(
+                ui.card_header("FFT Analysis"),
+                ui.navset_tab(
+                    ui.nav_panel(
+                        ui.tooltip(
+                            "1D Radial Profile",
+                            "Radially averaged power spectrum analysis with NuFFT interpolation for enhanced resolution detection",
+                            placement="top"
+                        ),
+                        ui.div(
+                            {"style": "height: 100%; display: flex; gap: 8px;"},
+                            # Left: Main content area with NuFFT power curve and heatmap
+                            ui.div(
+                                {"style": "height: 100%; display: flex; flex-direction: column; flex: 1;"},
+                                # Top: Power curve plot (60% height) - shows first for quick interaction
+                                output_widget("nufft_power_curve"),
+                                output_widget('nufft_heatmap')
+                                # ui.div(
+                                #     {"style": "flex: 6; display: flex; flex-direction: column; min-height: 0;"},
+                                #     ui.div(
+                                #         {"style": "flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                                #         output_widget("nufft_power_curve")
+                                #     )
+                                # ),
+                                # # Bottom: NuFFT focused heatmap (40% height) - shows after click
+                                # ui.div(
+                                #     {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                                #     output_widget("nufft_heatmap")
+                                # )
                             ),
+                            # Right: Controls spanning entire height
                             ui.div(
-                                {"style": "height: 100%; display: flex; gap: 8px;"},
-                                # Left: Main content area with NuFFT power curve and heatmap
+                                {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 240px; padding: 5px; flex-shrink: 0;"},
+                                ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
+                                # ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
+                                # ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
+                                # ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
+                                # ui.div(
+                                #     {"style": "margin-bottom: 5px;"},
+                                #     ui.panel_conditional(
+                                #         "input.nufft_smooth",
+                                #         ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
+                                #     ),
+                                # ),
                                 ui.div(
-                                    {"style": "height: 100%; display: flex; flex-direction: column; flex: 1;"},
-                                    # Top: Power curve plot (60% height) - shows first for quick interaction
-                                    output_widget("nufft_power_curve"),
-                                    output_widget('nufft_heatmap')
-                                    # ui.div(
-                                    #     {"style": "flex: 6; display: flex; flex-direction: column; min-height: 0;"},
-                                    #     ui.div(
-                                    #         {"style": "flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;"},
-                                    #         output_widget("nufft_power_curve")
-                                    #     )
-                                    # ),
-                                    # # Bottom: NuFFT focused heatmap (40% height) - shows after click
-                                    # ui.div(
-                                    #     {"style": "flex: 4; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
-                                    #     output_widget("nufft_heatmap")
-                                    # )
+                                    {"style": "margin-bottom: 5px;"},
+                                    ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
                                 ),
-                                # Right: Controls spanning entire height
                                 ui.div(
-                                    {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 240px; padding: 5px; flex-shrink: 0;"},
-                                    ui.input_checkbox("nufft_log_y", "Log Scale", value=False),
-                                    # ui.input_checkbox("nufft_use_mean_profile", "Use Average Profile", value=False),
-                                    # ui.input_checkbox("nufft_smooth", "Smooth Signal", value=False),
-                                    # ui.input_checkbox("nufft_detrend", "Detrend Signal", value=False),
-                                    # ui.div(
-                                    #     {"style": "margin-bottom: 5px;"},
-                                    #     ui.panel_conditional(
-                                    #         "input.nufft_smooth",
-                                    #         ui.input_slider("nufft_window_size", "Window Size", min=1, max=11, value=3, step=2),
-                                    #     ),
-                                    # ),
-                                    ui.div(
-                                        {"style": "margin-bottom: 5px;"},
-                                        ui.input_slider("nufft_r_sampling_freq", "Radial Sampling Frequency (per pixel)", min=0.1, max=10, value=5, step=0.1),
-                                    ),
-                                    ui.div(
-                                        {"style": "margin-bottom: 5px;"},
-                                        ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=5, value=2, step=0.1),
-                                    ),
-                                    ui.div(
-                                        {"style": "margin-bottom: 5px;"},
-                                        ui.input_slider("nufft_display_range", "Display Range (%)", min=1, max=10, value=3, step=0.5),
-                                    ),
-                                    # ui.input_action_button("nufft_find_apix", "Find Apix", class_="btn-primary"),
-                                )
-                            )
-                        ),
-                        ui.nav_panel(
-                            "2D Spectrum",
-                            ui.div(
-                                {"style": "height: 100%; display: flex; flex-direction: column; gap: 8px;"},
-                                # FFT display
-                                ui.div(
-                                    {"style": "flex: 1; min-height: 0;"},
-                                    output_widget("fft_with_circle")
+                                    {"style": "margin-bottom: 5px;"},
+                                    ui.input_slider("nufft_theta_sampling_freq", "Angular Sampling Frequency (per degree)", min=0.1, max=5, value=2, step=0.1),
                                 ),
-                                # Controls below the image
                                 ui.div(
-                                    {"style": "padding: 10px; display: flex; gap: 10px; align-items: center;"},
-                                    ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0;"),
-                                    ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
-                                    ui.div(
-                                        {"style": "flex: 1;"},
-                                        ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1, width="100%")
-                                    )
-                                )
+                                    {"style": "margin-bottom: 5px;"},
+                                    ui.input_slider("nufft_display_range", "Display Range (%)", min=1, max=10, value=3, step=0.5),
+                                ),
+                                # ui.input_action_button("nufft_find_apix", "Find Apix", class_="btn-primary"),
                             )
-                        ),
-
-                        # ui.nav_panel(
-                        #     "DFT",
-                        #     ui.div(
-                        #         {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
-                        #         # Left: Main content area with polar heatmap and radial profile
-                        #         ui.div(
-                        #             {"style": "height: 100%; display: flex; flex-direction: column;"},
-                        #             # Top: Polar Heat Map (70% height)
-                        #             ui.div(
-                        #                 {"style": "flex: 7; display: flex; align-items: center; justify-content: center; min-height: 0;"},
-                        #                 output_widget("fft_polar_heatmap")
-                        #             ),
-                        #             # Bottom: Radial Profile (30% height) 
-                        #             ui.div(
-                        #                 {"style": "flex: 3; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
-                        #                 output_widget("fft_1d_plot")
-                        #             )
-                        #         ),
-                        #         # Right: Controls spanning entire height
-                        #         ui.div(
-                        #             {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
-                        #             ui.input_checkbox("log_y", "Log Scale", value=False),
-                        #             ui.input_checkbox("use_mean_profile", "Use Average Profile", value=False),
-                        #             ui.input_checkbox("smooth", "Smooth Signal", value=False),
-                        #             ui.input_checkbox("detrend", "Detrend Signal", value=False),
-                        #             ui.div(
-                        #                 {"style": "margin-bottom: 10px;"},
-                        #                 ui.panel_conditional(
-                        #                     "input.smooth",
-                        #                     ui.input_slider("window_size", "Window Size", min=1, max=11, value=3, step=2),
-                        #                 ),
-                        #             ),
-                        #             ui.div(
-                        #                 {"style": "margin-bottom: 10px;"},
-                        #                 ui.input_checkbox("super_resolution", "Super Resolution", value=True),
-                        #                 ui.panel_conditional(
-                        #                     "input.super_resolution",
-                        #                     ui.input_slider("gaussian_window", "Gaussian Window (pixels)", min=1, max=21, value=5, step=2),
-                        #                 ),
-                        #             ),
-                        #             ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
-                        #         )
-                        #     )
-                        # )
+                        )
                     ),
-                    full_screen=True,
-                    style="flex: 1; min-height: 400px;"
+                    ui.nav_panel(
+                        "2D Spectrum",
+                        ui.div(
+                            {"style": "height: 100%; display: flex; flex-direction: row; gap: 8px;"},
+                            #{"style": "height: 100%; display: grid; grid-template-columns: 1fr 250px; gap: 8px;"},
+                            # FFT display
+                            #ui.div(
+                            #     {"style": "flex: 1; min-height: 0;"},
+                            output_widget("fft_with_circle"),
+                            #),
+                            # Controls below the image
+                            ui.div(
+                                #{"style": "padding: 10px; display: flex; gap: 10px; align-items: center;"},
+                                {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 300px; gap:10px; padding: 5px; flex-shrink: 0;"},
+                                ui.div(
+                                    {"style": "flex: 0;"},
+                                    ui.input_slider("contrast", "Contrast", min=0.1, max=5.0, value=1.0, step=0.1, width="100%")
+                                ),
+                                ui.input_action_button("detect_peaks", "Detect Peaks", class_="btn-primary", style="flex-shrink: 0;"),
+                                ui.input_action_button("clear_overlay", "Clear Overlay", class_="btn-secondary", style="flex-shrink: 0;"),
+
+                            )
+                        )
+                    ),
+
+                    # ui.nav_panel(
+                    #     "DFT",
+                    #     ui.div(
+                    #         {"style": "height: 100%; display: grid; grid-template-columns: 1fr 200px; gap: 15px;"},
+                    #         # Left: Main content area with polar heatmap and radial profile
+                    #         ui.div(
+                    #             {"style": "height: 100%; display: flex; flex-direction: column;"},
+                    #             # Top: Polar Heat Map (70% height)
+                    #             ui.div(
+                    #                 {"style": "flex: 7; display: flex; align-items: center; justify-content: center; min-height: 0;"},
+                    #                 output_widget("fft_polar_heatmap")
+                    #             ),
+                    #             # Bottom: Radial Profile (30% height) 
+                    #             ui.div(
+                    #                 {"style": "flex: 3; display: flex; align-items: center; justify-content: center; min-height: 0; border-top: 1px solid #dee2e6;"},
+                    #                 output_widget("fft_1d_plot")
+                    #             )
+                    #         ),
+                    #         # Right: Controls spanning entire height
+                    #         ui.div(
+                    #             {"style": "display: flex; flex-direction: column; justify-content: flex-start; width: 100%; padding: 10px;"},
+                    #             ui.input_checkbox("log_y", "Log Scale", value=False),
+                    #             ui.input_checkbox("use_mean_profile", "Use Average Profile", value=False),
+                    #             ui.input_checkbox("smooth", "Smooth Signal", value=False),
+                    #             ui.input_checkbox("detrend", "Detrend Signal", value=False),
+                    #             ui.div(
+                    #                 {"style": "margin-bottom: 10px;"},
+                    #                 ui.panel_conditional(
+                    #                     "input.smooth",
+                    #                     ui.input_slider("window_size", "Window Size", min=1, max=11, value=3, step=2),
+                    #                 ),
+                    #             ),
+                    #             ui.div(
+                    #                 {"style": "margin-bottom: 10px;"},
+                    #                 ui.input_checkbox("super_resolution", "Super Resolution", value=True),
+                    #                 ui.panel_conditional(
+                    #                     "input.super_resolution",
+                    #                     ui.input_slider("gaussian_window", "Gaussian Window (pixels)", min=1, max=21, value=5, step=2),
+                    #                 ),
+                    #             ),
+                    #             ui.input_action_button("find_max", "Find Max", class_="btn-primary"),
+                    #         )
+                    #     )
+                    # )
                 ),
-                # Result card (bottom)
-                ui.card(
-                    ui.card_header("Result"),
-                    ui.div(
-                        {"style": "padding: 8px; display: flex; align-items: center; gap: 12px; min-height: 80px;"},
-                        # Apix slider
-                        #ui.div(
-                        #{"style": "flex: 5; display: flex; align-items: flex-end; gap: 5px;"},
-                        ui.tags.label("Pixel Size (Å/px):", {"for": "apix_slider", "style": "margin: 0; white-space: nowrap;"}),
-                        ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%"),
-                            # ui.div(
-                            #     {"style": "flex: 1; display: flex; align-items: flex-end;"},
-                            #     ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%")
-                            # ),
-                        #),
-                        # Apix exact input and Set button
-                        #ui.div(
-                            #{"style": "display: flex; align-items: flex-end; gap: 5px; flex: 3;"},
-                            #ui.tags.label("Exact Value:", {"for": "apix_exact_str", "style": "margin: 0; white-space: nowrap;"}),
-                        ui.input_text("apix_exact_str", None, value="1.0", width="200px"),
-
-                        ui.input_action_button("apix_set_btn", "Set", class_="btn-primary", style="height: 38px; min-width: 50px; display: flex; align-items: center; justify-content: center;"),
-                        #),
-                        # Add to Table button
-                        ui.input_action_button("add_to_table", "Add to Table", class_="btn-success", style="height: 38px; width: 100%;max-width: 200px; display: flex; align-items: center; justify-content: center;"),
-
-                    ),
-                    style="flex: 1 2 2 1 2;min-height: 100px;"
-                )
+                full_screen=True,
+                #style="flex: 1; min-height: 400px;"
             ),
-            col_widths=[5, 7],
-        )
+                # Result card (bottom)
+            ui.card(
+                ui.card_header("Result"),
+                ui.div(
+                    {"style": "padding: 8px; display: flex;flex-direction: column; align-items: left; gap: 10px; min-height: 80px;"},
+                    # Apix slider
+                    #ui.div(
+                    #{"style": "flex: 5; display: flex; align-items: flex-end; gap: 5px;"},
+                    ui.tags.label("Pixel Size (Å/px):", {"for": "apix_slider", "style": "margin: 0; white-space: nowrap;"}),
+                    ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%"),
+                        # ui.div(
+                        #     {"style": "flex: 1; display: flex; align-items: flex-end;"},
+                        #     ui.input_slider("apix_slider", None, min=0.01, max=2.0, value=1.0, step=0.0001, width="100%")
+                        # ),
+                    #),
+                    # Apix exact input and Set button
+                    ui.div(
+                        {"style": "display: flex; align-items: baseline; gap: 5px; justify-content:center; flex-direction:row"},
+                       # ui.div(
+                            #{"style": "display: flex; align-items: center; justify:center;background: #e9ecef; border: 10px;"},
+                        ui.input_text("apix_exact_str", None, value="1.0",width="120px"),
+                        #),
+                        ui.input_action_button(
+                            "apix_set_btn",
+                            "Set",
+                            class_="btn-primary",
+                        ),
+
+                        # ui.div(
+                        #     {"style": "display: flex; align-items: center; height: 100%;"},
+                        #     ui.input_text("apix_exact_str", None, value="1.0", width="120px"),
+                        # ),
+                        # ui.div(
+                        #     {"style": "display: flex; align-items: center; height: 100%;"},
+                        #     ui.input_action_button(
+                        #         "apix_set_btn",
+                        #         "Set",
+                        #         class_="btn-primary",
+                        #         style="height:100%; display:flex; align-items:center; justify-content:center; padding:0 12px;"
+                        #     ),
+                        # ),
+                    ),
+                    ui.input_action_button("add_to_table", "Add to Table", class_="btn-success")#, style="height: 38px; width: 100%;max-width: 200px; display: flex; align-items: center; justify-content: center;"),
+
+                ),
+                # style="flex: 1 2 2 1 2;min-height: 100px;"
+            ),
+            #),
+            col_widths=[4,6,2],
+        ),
     ),
     # Secondary analysis section - scrollable below
     ui.div(
@@ -5187,7 +5208,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             if orientation_degrees is not None:
                 orientation_str = f", Orientation: {orientation_degrees:.1f}°"
             
-            red_result = (f"🔴 Fine-tuned: Minor axis: {small_axis:.2f}, "
+            red_result = (f"🟢 Minor axis: {small_axis:.2f}, "
                          f"Major axis: {large_axis:.2f}, "
                          f"Tilt angle: {tilt_angle_degrees:.2f}°"
                          f"{orientation_str}"
