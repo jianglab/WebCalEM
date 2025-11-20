@@ -4023,7 +4023,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"🔧 Height range: {min_visible_height}px - {max_reasonable_height}px (no longer square pixels)")
             
             fig.update_layout(
-                title=f'🎯 FOCUSED NuFFT: ±15px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
+                title=f'🎯 FOCUSED Heatmap: ±15px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
                 xaxis_title='Angular Samples',
                 yaxis_title='Radial Samples (Frequency)', 
                 height=display_height,
@@ -4087,7 +4087,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             widget.update_layout(
                 title=dict(
-                    text=f'🎯 FOCUSED NuFFT: ±10px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
+                    text=f'🎯 FOCUSED Heatmap: ±10px around {clicked_freq:.6f} 1/Å (Resolution: {1/clicked_freq:.3f} Å)',
                     font=dict(size=12)
                 ),
                 xaxis=dict(
@@ -4353,7 +4353,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             
             fig.update_layout(
                 title=dict(
-                    text=f'NuFFT Power Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For the peak is multiplet, select the leftmost subpeak.</sub>',
+                    text=f'Radial Curve: ±{display_range:.1f}% around {target_resolution:.2f}Å ({freq_low:.3f}-{freq_high:.3f} 1/Å) ({apix_source})<br><sub style="color: #666;">Click on peaks to calculate tentative pixel size. For the peak is multiplet, select the leftmost subpeak.</sub>',
                     font=dict(size=16)
                 ),
                 xaxis_title='Spatial Resolution (1/Å)',
