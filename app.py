@@ -361,7 +361,7 @@ app_ui = ui.page_fillable(
                 ui.card(
                     ui.card_header("FFT Analysis"),
                     ui.div(
-                        {"style": "height: 750px; overflow: hidden;"},
+                        {"style": "height: 778px; overflow: hidden;"},
                         ui.navset_tab(
                             ui.nav_panel(
                         ui.tooltip(
@@ -1831,7 +1831,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                         mode='markers',
                         marker=dict(
                             color='rgba(0,0,0,0)',  # Transparent fill
-                            size=10,
+                            size=14,
                             symbol='circle',
                             line=dict(color='lime', width=1)  # Green outline only
                         ),
@@ -3249,9 +3249,9 @@ def server(input: Inputs, output: Outputs, session: Session):
                                         mode='markers',
                                         marker=dict(
                                             color='rgba(0,0,0,0)',
-                                            size=8,
+                                            size=14,
                                             symbol='circle',
-                                            line=dict(color='lime', width=2)
+                                            line=dict(color='lime', width=1)
                                         ),
                                         name='auto_peaks',
                                         hoverinfo='skip',
