@@ -466,8 +466,12 @@ def plot_image(image_data: np.ndarray, title: str, apix: float, plot_height: int
     """
     Create a Plotly heatmap figure for displaying image data using plotly.express.imshow.
     """
+    # Normalize the image data using percentile-based clipping for robust display
+    # This ensures images with different intensity ranges display correctly
+    normalized_data = normalize_image(image_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+
     fig = px.imshow(
-        image_data,
+        normalized_data,
         color_continuous_scale="gray",
         aspect="equal",  # Force square aspect ratio
         origin="upper",

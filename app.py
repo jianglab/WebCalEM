@@ -2182,12 +2182,15 @@ def server(input: Inputs, output: Outputs, session: Session):
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
             print(f"Set apix slider and exact value to match nominal apix: {nominal_value:.3f}")
             
-            # Set the binned data for display (always 1000x1000)
-            image_data.set(binned_data)
+            # Normalize binned data for display
+            binned_data_for_display = normalize_image(binned_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+
+            # Set the normalized binned data for display (always 1000x1000)
+            image_data.set(binned_data_for_display)
             image_apix.set(target_apix)
             image_filename.set(original_filename)
-            
-            # Store original and binned data separately
+
+            # Store original and binned data separately (keep raw binned data for FFT calculations)
             original_image_data.set(original_data)
             binned_image_data.set(binned_data)
             
@@ -2243,9 +2246,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             # Note: region_table_data is NOT cleared to allow comparison across multiple images
-            
+
             # Also keep the old format for compatibility with FFT calculations
-            img = Image.fromarray(binned_data.astype(np.uint8))
+            # Normalize binned_data for display to handle different intensity ranges
+            binned_data_normalized = normalize_image(binned_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+            img = Image.fromarray(binned_data_normalized)
             raw_image_data.set({
                 'img': img,
                 'data': binned_data
@@ -2316,13 +2321,16 @@ def server(input: Inputs, output: Outputs, session: Session):
             ui.update_slider("apix_slider", value=nominal_value, session=session)
             ui.update_text("apix_exact_str", value=f"{nominal_value:.3f}", session=session)
             print(f"Extracted nominal apix from filename: {nominal_value:.2f}")
-            
-            # Set the image data (same as upload handler)
-            image_data.set(binned_data)
+
+            # Normalize binned data for display
+            binned_data_for_display = normalize_image(binned_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+
+            # Set the normalized image data (same as upload handler)
+            image_data.set(binned_data_for_display)
             image_apix.set(target_apix)
             image_filename.set(original_filename)
-            
-            # Store original and binned data separately
+
+            # Store original and binned data separately (keep raw binned data for FFT calculations)
             original_image_data.set(original_data)
             binned_image_data.set(binned_data)
             
@@ -2379,14 +2387,16 @@ def server(input: Inputs, output: Outputs, session: Session):
             })
             
             # Note: region_table_data is NOT cleared to allow comparison across multiple images
-            
+
             # Also keep the old format for compatibility with FFT calculations
-            img = Image.fromarray(binned_data.astype(np.uint8))
+            # Normalize binned_data for display to handle different intensity ranges
+            binned_data_normalized = normalize_image(binned_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+            img = Image.fromarray(binned_data_normalized)
             raw_image_data.set({
                 'img': img,
                 'data': binned_data
             })
-            
+
             print(f"Successfully loaded image from URL: {original_filename}")
             
             
@@ -2730,13 +2740,16 @@ def server(input: Inputs, output: Outputs, session: Session):
                     x_range=(square_region['x0'], square_region['x1']),
                     y_range=(square_region['y0'], square_region['y1'])
                 )
-                region_img = Image.fromarray(region_data.astype(np.uint8))
+                # Normalize region data for proper FFT processing
+                region_data_normalized = normalize_image(region_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+                region_img = Image.fromarray(region_data_normalized)
                 print(f"Extracted square region size: {region_img.size} (no binning)")
                 return region_img
             except Exception as e:
                 print(f"Error extracting square region: {e}")
                 # Fallback to entire original image
-                region_img = Image.fromarray(original_data.astype(np.uint8))
+                original_data_normalized = normalize_image(original_data, use_percentiles=True, low_percentile=1.0, high_percentile=99.0)
+                region_img = Image.fromarray(original_data_normalized)
                 return region_img
         
         # If no drawn region, return None - user must explicitly select a region before FFT calculation
