@@ -4,6 +4,12 @@ WebCalEM is a browser-based TEM magnification calibration tool. It loads test sp
 
 ## Launch
 
+Open the hosted app:
+
+```text
+https://jianglab.github.io/magCalApp/
+```
+
 The client app is contained in `index.html`.
 
 For best results, serve the folder with a local web server:
