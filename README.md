@@ -4,15 +4,16 @@ WebCalEM is a browser-based TEM magnification calibration tool. It loads test sp
 
 ## Launch
 
-Open the hosted app:
+Open the hosted app: [WebCalEM on GitHub Pages](https://jianglab.github.io/magCalApp/)
 
-```text
-https://jianglab.github.io/magCalApp/
+For local development or offline testing, first clone the repo:
+
+```bash
+git clone https://github.com/jianglab/magCalApp.git
+cd magCalApp
 ```
 
-The client app is contained in `index.html`.
-
-For best results, serve the folder with a local web server:
+Then serve the repo folder with:
 
 ```bash
 python -m http.server 8766
@@ -24,7 +25,7 @@ Then open:
 http://127.0.0.1:8766/
 ```
 
-You can also open `index.html` directly in a browser, but local file restrictions may limit some loading/export behavior.
+The app is contained in `index.html`. The local server only serves static files; you do not need to install the old Python app dependencies. You can also download the repo as a ZIP, unzip it, open a terminal in that folder, and run the same `python -m http.server 8766` command.
 
 ## Basic Workflow
 
