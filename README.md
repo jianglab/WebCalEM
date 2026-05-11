@@ -53,6 +53,5 @@ The `test_image` folder includes sample TIFF images for quick validation. The de
 
 ## Notes
 
-- Computation runs client-side in the browser; large regions and large FFT grids can be memory intensive.
+- Computation runs client-side in the browser; large regions and large FFT grids can be memory-intensive.
 - TIFF and MRC parsing are intentionally lightweight and may not cover every microscopy file variant.
-- A true client-side FINUFFT/NUFFT implementation is not bundled; the radial calculation uses the current browser FFT/polar sampling approximation.
