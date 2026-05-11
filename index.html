@@ -1,0 +1,4730 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebCalEM: TEM Magnification Calibration</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --panel-soft: #fbfcff;
+      --line: #e1e7f0;
+      --line-strong: #cdd6e3;
+      --text: #17202a;
+      --muted: #687385;
+      --blue: #2563eb;
+      --blue-dark: #1d4ed8;
+      --green: #0f9f6e;
+      --red: #d83a52;
+      --cyan: #00a6a6;
+      --amber: #d97706;
+      --shadow: 0 14px 36px rgba(23, 32, 42, 0.08);
+      --shadow-soft: 0 1px 2px rgba(23, 32, 42, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    header {
+      background: rgba(255, 255, 255, 0.92);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(12px);
+    }
+
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: clamp(22px, 2.1vw, 30px);
+      font-weight: 760;
+      color: var(--text);
+    }
+
+    #appTitle {
+      cursor: help;
+    }
+
+    h2 {
+      margin: 0;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      font-weight: 720;
+      color: #233044;
+      background: var(--panel-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 7px 11px;
+      color: #fff;
+      background: var(--blue);
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: var(--shadow-soft);
+      transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease, box-shadow 160ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--blue-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+    }
+
+    button.secondary { background: #566174; }
+    button.danger { background: var(--red); }
+    button.success { background: var(--green); }
+    button.ghost {
+      background: #f3f6fb;
+      color: #273449;
+      border-color: var(--line);
+      box-shadow: none;
+    }
+    button.active {
+      background: var(--blue);
+      color: #fff;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+
+    .card-expand,
+    .plot-tool {
+      padding: 4px 8px;
+      color: #273449;
+      background: #f3f6fb;
+      border-color: var(--line);
+      box-shadow: none;
+      font-size: 12px;
+    }
+
+    .card-expand:hover:not(:disabled),
+    .plot-tool:hover:not(:disabled) {
+      color: #fff;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 6px 8px;
+      background: #fff;
+      min-height: 34px;
+      color: var(--text);
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus {
+      border-color: rgba(37, 99, 235, 0.62);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      outline: none;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    label {
+      color: #344256;
+      font-weight: 660;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--image-col, minmax(330px, 1.05fr)) 6px minmax(460px, 1.65fr);
+      gap: 10px 6px;
+      padding: 14px;
+      align-items: stretch;
+      height: var(--workspace-height, auto);
+      min-height: var(--workspace-min-height, auto);
+    }
+
+    .analysis-column {
+      display: grid;
+      gap: 14px;
+      min-width: 0;
+      align-self: stretch;
+      height: 100%;
+    }
+
+    .layout-splitter {
+      align-self: stretch;
+      min-height: 360px;
+      border: 0;
+      background: transparent;
+      cursor: col-resize;
+      position: relative;
+    }
+
+    .layout-splitter::before,
+    .stats-splitter::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: var(--line-strong);
+      transform: translateX(-50%);
+    }
+
+    .layout-splitter::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2px;
+      height: 28px;
+      border-radius: 999px;
+      background: #7b8490;
+      box-shadow: -4px 0 0 #7b8490, 4px 0 0 #7b8490;
+      transform: translate(-50%, -50%);
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+      overflow: auto;
+    }
+
+    .fft-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .image-card,
+    .analysis-column {
+      height: var(--workspace-content-height, 100%);
+    }
+
+    .fft-card {
+      height: 100%;
+    }
+
+    .image-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .image-card .image-wrap {
+      flex: 1;
+      max-height: none;
+    }
+
+    .workspace-splitter {
+      height: 6px;
+      margin: 0 14px 14px;
+      border: 0;
+      background: transparent;
+      cursor: row-resize;
+      position: relative;
+    }
+
+    .workspace-splitter::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: var(--line-strong);
+      transform: translateY(-50%);
+    }
+
+    .workspace-splitter::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 28px;
+      height: 2px;
+      border-radius: 999px;
+      background: #7b8490;
+      box-shadow: 0 -4px 0 #7b8490, 0 4px 0 #7b8490;
+      transform: translate(-50%, -50%);
+    }
+
+    .card.expanded {
+      position: fixed;
+      inset: 14px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 28px);
+      overflow: auto;
+    }
+
+    body.has-expanded-card {
+      overflow: hidden;
+    }
+
+    .card.expanded .image-wrap,
+    .card.expanded .fft-wrap {
+      min-height: 60vh;
+      max-height: none;
+    }
+
+    .card.expanded .plot-card canvas,
+    .card.expanded .plotly-plot,
+    .card.expanded #statsPlot {
+      height: clamp(360px, 58vh, 760px);
+    }
+
+    .card-body {
+      padding: 12px;
+    }
+
+    .option-panel {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .option-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 36px;
+      padding: 8px 12px;
+      color: #273449;
+      font-weight: 740;
+      cursor: pointer;
+      list-style: none;
+      background: var(--panel-soft);
+    }
+
+    .option-panel > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .option-panel > summary::after {
+      content: "+";
+      color: var(--muted);
+      font-weight: 760;
+    }
+
+    .option-panel[open] > summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .option-panel[open] > summary::after {
+      content: "-";
+    }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: minmax(170px, 220px) minmax(260px, 1fr);
+      gap: 10px 12px;
+      align-items: start;
+    }
+
+    .method-control {
+      grid-column: 1;
+    }
+
+    .input-main,
+    .upload-table-wrap {
+      grid-column: 2;
+    }
+
+    .upload-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .auto-sample-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: 2px;
+    }
+
+    .auto-sample-controls {
+      display: flex;
+      align-items: end;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .auto-sample-controls label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .auto-sample-controls input[type="number"] {
+      width: 86px;
+    }
+
+    .auto-sample-controls select {
+      width: 104px;
+    }
+
+    .auto-sample-start {
+      min-height: 34px;
+      padding-inline: 16px;
+    }
+
+    .calibration-row {
+      grid-column: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+    .calibration-row label {
+      padding-bottom: 0;
+    }
+
+    .calibration-row select {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .calibration-row input[type="number"] {
+      width: 100%;
+    }
+
+    .upload-table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .upload-table-wrap summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      padding: 7px 10px;
+      color: #273449;
+      font-weight: 700;
+      cursor: pointer;
+      list-style: none;
+      background: #f8fafc;
+    }
+
+    .upload-table-wrap summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .upload-table-wrap summary::after {
+      content: "+";
+      color: var(--muted);
+      font-weight: 760;
+    }
+
+    .upload-table-wrap[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .upload-table-wrap[open] summary::after {
+      content: "-";
+    }
+
+    .file-input-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .browse-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: max-content;
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 7px 13px;
+      color: #fff;
+      background: var(--blue);
+      cursor: pointer;
+      box-shadow: var(--shadow-soft);
+      transition: background-color 160ms ease, transform 120ms ease, box-shadow 160ms ease;
+    }
+
+    .browse-button:hover {
+      background: var(--blue-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+    }
+
+    .radio-row,
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .image-wrap,
+    .fft-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #eef3f8;
+      border-top: 1px solid var(--line);
+      min-height: clamp(300px, 48vh, 620px);
+      max-height: min(72vh, 840px);
+      overflow: auto;
+    }
+
+    .spectrum-stage {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      max-width: 780px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    canvas {
+      max-width: 100%;
+      background: #fff;
+      touch-action: none;
+    }
+
+    #imageCanvas {
+      cursor: crosshair;
+    }
+
+    #fftCanvas {
+      cursor: crosshair;
+      width: min(100%, 750px);
+      height: auto;
+      image-rendering: pixelated;
+    }
+
+    .tabs {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 6px;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .tab-panel {
+      display: none;
+      padding: 10px;
+      min-height: 0;
+    }
+
+    .tab-panel.active {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+    }
+
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(220px, 250px);
+      gap: 12px;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .plot-stack {
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    #nufftPanel .analysis-grid,
+    #nufftPanel .plot-stack {
+      height: 100%;
+    }
+
+    #nufftPanel .plot-stack {
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    #nufftPanel .plot-card {
+      display: flex;
+      min-height: 0;
+    }
+
+    .plot-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+    }
+
+    .plot-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      padding: 6px;
+      border-bottom: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .plot-card canvas,
+    .plotly-plot {
+      width: 100%;
+      height: var(--plot-height, clamp(250px, 31vh, 390px));
+      display: block;
+      cursor: crosshair;
+    }
+
+    .plotly-plot {
+      cursor: default;
+    }
+
+    #nufftPanel .plotly-plot {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .small-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .result-card .card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .analysis-result {
+      width: min(250px, calc(100% - 20px));
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      z-index: 2;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    }
+
+    .analysis-result-title {
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--line);
+      color: #233044;
+      font-size: 13px;
+      font-weight: 740;
+      background: #f3f6fb;
+    }
+
+    .status {
+      min-height: 28px;
+      border-top: 1px solid var(--line);
+      padding: 9px 14px;
+      color: var(--muted);
+      background: var(--panel-soft);
+      font-size: 13px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: var(--stats-table-col, minmax(420px, 1.45fr)) 6px minmax(360px, 1fr);
+      gap: 6px;
+      padding: 0 14px 14px;
+      align-items: stretch;
+      height: var(--stats-height, clamp(560px, 62vh, 720px));
+      min-height: 0;
+    }
+
+    .stats > .card {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .stats-card,
+    .statistics-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .measurements-table-wrap {
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: none;
+      border-top: 0;
+      border-bottom: 0;
+      background: #fff;
+    }
+
+    .stats-actions {
+      flex: 0 0 auto;
+      margin-top: 0;
+      border-top: 1px solid var(--line);
+      background: var(--panel-soft);
+      justify-content: center;
+    }
+
+    .stats-splitter {
+      align-self: stretch;
+      min-height: 320px;
+      border: 0;
+      background: transparent;
+      cursor: col-resize;
+      position: relative;
+    }
+
+    .stats-splitter::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2px;
+      height: 26px;
+      border-radius: 999px;
+      background: #7b8490;
+      box-shadow: -4px 0 0 #7b8490, 4px 0 0 #7b8490;
+      transform: translate(-50%, -50%);
+    }
+
+    .table-wrap {
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    .stats-table-panel {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .stats-table-panel summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 34px;
+      padding: 7px 10px;
+      color: #273449;
+      font-weight: 700;
+      cursor: pointer;
+      list-style: none;
+      background: #f8fafc;
+    }
+
+    .stats-table-panel summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .stats-table-panel summary::after {
+      content: "+";
+      color: var(--muted);
+      font-weight: 760;
+    }
+
+    .stats-table-panel[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .stats-table-panel[open] summary::after {
+      content: "-";
+    }
+
+    .stats-table-panel .table-wrap {
+      max-height: 236px;
+    }
+
+    .stats-card .measurements-table-wrap {
+      max-height: none;
+    }
+
+    .statistics-card .plot-card {
+      flex: 1 1 0;
+      min-height: 260px;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .statistics-card #statsPlot {
+      height: 100%;
+      min-height: 260px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 7px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #f3f6fb;
+      z-index: 1;
+    }
+
+    tr.selected {
+      background: #e9f1ff;
+    }
+
+    tr.hovered {
+      background: #fff7d6;
+      outline: 2px solid rgba(217, 119, 6, 0.42);
+      outline-offset: -2px;
+    }
+
+    tr.selected.hovered {
+      background: #dbeafe;
+    }
+
+    .preview-cell {
+      cursor: zoom-in;
+    }
+
+    .preview-cell:hover {
+      background: #eef4ff;
+    }
+
+    #statsPlot {
+      width: 100%;
+      height: clamp(280px, 40vh, 460px);
+      display: block;
+    }
+
+    .hover-tip {
+      position: fixed;
+      z-index: 80;
+      max-width: min(320px, calc(100vw - 28px));
+      padding: 9px 10px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 8px;
+      color: #f8fafc;
+      background: rgba(15, 23, 42, 0.92);
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.22);
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+      backdrop-filter: blur(10px);
+    }
+
+    .hover-tip .tip-title {
+      margin-bottom: 4px;
+      color: #ffffff;
+      font-weight: 760;
+    }
+
+    .hover-tip .tip-muted {
+      color: #cbd5e1;
+    }
+
+    .hover-tip.preview-tip {
+      max-width: min(460px, calc(100vw - 28px));
+      padding: 10px;
+    }
+
+    .hover-tip.latex-tip {
+      max-width: min(520px, calc(100vw - 28px));
+      padding: 12px 13px;
+      font-size: 12.5px;
+    }
+
+    .hover-tip .tip-html {
+      color: #dbeafe;
+    }
+
+    .hover-tip .tip-html div + div {
+      margin-top: 6px;
+    }
+
+    .hover-tip .tip-equation {
+      padding: 7px 8px;
+      border: 1px solid rgba(226, 232, 240, 0.22);
+      border-radius: 6px;
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .hover-tip .tip-media {
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(226, 232, 240, 0.28);
+      border-radius: 6px;
+      background: #ffffff;
+    }
+
+    .hover-tip .tip-media img {
+      display: block;
+      width: 100%;
+      max-height: min(320px, 48vh);
+      object-fit: contain;
+    }
+
+    .hover-tip .tip-meta {
+      margin-top: 8px;
+      color: #dbeafe;
+    }
+
+    .hover-crosshair {
+      position: fixed;
+      z-index: 75;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .hover-crosshair .crosshair-v,
+    .hover-crosshair .crosshair-h {
+      position: absolute;
+      background: rgba(0, 166, 166, 0.86);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.32);
+    }
+
+    .hover-crosshair .crosshair-v {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+
+    .hover-crosshair .crosshair-h {
+      left: 0;
+      right: 0;
+      height: 1px;
+    }
+
+    .hover-crosshair .crosshair-dot {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border: 2px solid #ffffff;
+      border-radius: 999px;
+      background: var(--cyan);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.28);
+      transform: translate(-50%, -50%);
+    }
+
+    .zoom-box {
+      position: fixed;
+      z-index: 76;
+      border: 1px solid rgba(37, 99, 235, 0.95);
+      background: rgba(37, 99, 235, 0.16);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
+      pointer-events: none;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1200px) {
+      .stats,
+      .analysis-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #nufftPanel .analysis-grid,
+      #nufftPanel .plot-stack {
+        height: auto;
+      }
+
+      #nufftPanel .plot-stack {
+        grid-template-rows: none;
+      }
+
+      #nufftPanel .plotly-plot {
+        height: var(--plot-height, clamp(250px, 31vh, 390px));
+      }
+
+      .analysis-result {
+        position: static;
+        width: auto;
+        margin: 0 10px 10px;
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+        padding: 10px;
+      }
+
+      .layout-splitter {
+        display: none;
+      }
+
+      .workspace-splitter {
+        display: none;
+      }
+
+      .layout {
+        height: auto;
+      }
+    }
+
+    @media (max-width: 860px) {
+      .control-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .method-control,
+      .input-main,
+      .calibration-row,
+      .upload-table-wrap {
+        grid-column: 1;
+      }
+
+      .method-control {
+        grid-row: auto;
+      }
+
+      .stats {
+        grid-template-columns: 1fr;
+        padding: 0 10px 10px;
+      }
+
+      .stats-splitter {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="appTitle">WebCalEM: TEM Magnification Calibration</h1>
+  </header>
+
+  <main class="layout">
+    <section class="card image-card">
+      <h2>Original Image</h2>
+      <details class="option-panel" open>
+        <summary>Options</summary>
+        <div class="card-body stack">
+          <div class="control-grid">
+            <div class="stack method-control">
+              <label>Method</label>
+              <div class="radio-row">
+                <label id="methodUrlLabel"><input type="radio" name="method" value="url" checked> URL</label>
+                <label id="methodUploadLabel"><input type="radio" name="method" value="upload"> Upload</label>
+              </div>
+            </div>
+            <div class="stack input-main" id="urlControls">
+              <label id="downloadUrlLabel" for="downloadUrl">Download URL</label>
+              <input id="downloadUrl" type="text" value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff">
+            </div>
+            <div class="hidden input-main" id="uploadControls">
+              <div class="upload-header">
+                <label id="fileInputLabel" for="fileInput">Upload</label>
+                <label class="browse-button" for="fileInput">Browse</label>
+                <label class="auto-sample-toggle"><input id="autoSample" type="checkbox"> Autosample</label>
+              </div>
+              <div id="autoSampleControls" class="auto-sample-controls hidden">
+                <label for="autoSampleN">Regions
+                  <input id="autoSampleN" type="number" min="1" max="100" step="1" value="4">
+                </label>
+                <label for="autoSampleSize">Region size
+                  <select id="autoSampleSize">
+                    <option value="10">10%</option>
+                    <option value="25" selected>25%</option>
+                    <option value="50">50%</option>
+                    <option value="75">75%</option>
+                    <option value="100">100%</option>
+                  </select>
+                </label>
+                <button id="autoSampleStartBtn" type="button" class="secondary auto-sample-start" disabled>Start</button>
+              </div>
+              <input id="fileInput" class="file-input-hidden" type="file" multiple accept="image/*,.mrc,.tif,.tiff,.png,.jpg,.jpeg">
+            </div>
+            <div class="calibration-row">
+              <label for="resolutionType">Specimen</label>
+              <select id="resolutionType">
+                <option>Graphene (2.13 A)</option>
+                <option>Gold (2.355 A)</option>
+                <option>Ice (3.661 A)</option>
+                <option>Custom</option>
+              </select>
+              <div class="stack hidden" id="customResolutionWrap">
+                <label for="customResolution">Custom Res (A)</label>
+                <input id="customResolution" type="number" min="0.1" max="10" step="0.01" value="3.0">
+              </div>
+              <label for="nominalApix">Nominal (A/px)</label>
+              <input id="nominalApix" type="number" min="0.01" max="10" step="0.01" value="1.00">
+            </div>
+            <details id="uploadTableWrap" class="table-wrap upload-table-wrap hidden" open>
+              <summary id="uploadTableSummary">Uploaded files</summary>
+              <table>
+                <thead><tr><th>File Name</th><th>Nominal Size</th></tr></thead>
+                <tbody id="uploadTable"></tbody>
+              </table>
+            </details>
+          </div>
+        </div>
+      </details>
+      <div class="image-wrap">
+        <canvas id="imageCanvas" width="1000" height="1000"></canvas>
+      </div>
+    </section>
+
+    <div id="layoutSplitter" class="layout-splitter" role="separator" aria-label="Resize image and analysis panes"></div>
+
+    <div class="analysis-column">
+    <section class="card fft-card">
+      <h2>FFT Analysis</h2>
+      <div class="tabs">
+        <button class="ghost active" data-tab="nufftPanel">1D Radial Profile</button>
+        <button class="ghost" data-tab="spectrumPanel">2D Spectrum</button>
+      </div>
+      <div id="nufftPanel" class="tab-panel active">
+        <div class="analysis-grid">
+          <div class="plot-stack">
+            <div class="plot-card">
+              <div id="powerPlot" class="plotly-plot"></div>
+            </div>
+            <div class="plot-card">
+              <div id="heatmapPlot" class="plotly-plot"></div>
+            </div>
+          </div>
+          <aside class="stack">
+            <div class="row">
+              <label><input id="nufftLogY" type="checkbox"> Log Scale</label>
+              <label class="autocorrect-toggle"><input id="autoCorrect" type="checkbox" checked> Autocorrect</label>
+            </div>
+            <label for="nufftRSampling">Radial Sampling Frequency (per pixel)</label>
+            <input id="nufftRSampling" type="range" min="0.1" max="10" step="0.1" value="5">
+            <div class="small-note"><span id="nufftRLabel">5.0</span></div>
+            <label for="nufftThetaSampling">Angular Sampling Frequency (per degree)</label>
+            <input id="nufftThetaSampling" type="range" min="0.1" max="5" step="0.1" value="2">
+            <div class="small-note"><span id="nufftThetaLabel">2.0</span></div>
+            <label for="nufftDisplayRange">Display Range (%)</label>
+            <input id="nufftDisplayRange" type="range" min="1" max="20" step="0.5" value="3">
+            <div class="small-note"><span id="nufftRangeLabel">3.0</span>%</div>
+            <div class="small-note" id="nufftMeta">No NuFFT data yet.</div>
+          </aside>
+        </div>
+      </div>
+      <div id="spectrumPanel" class="tab-panel">
+        <div class="analysis-grid">
+          <div class="fft-wrap">
+            <div class="spectrum-stage">
+              <div class="plot-toolbar" data-plot="fft">
+                <button class="plot-tool" data-plot="fft" data-action="zoom-in">+</button>
+                <button class="plot-tool" data-plot="fft" data-action="zoom-out">-</button>
+                <button class="plot-tool" data-plot="fft" data-action="reset">Reset</button>
+              </div>
+              <canvas id="fftCanvas" width="512" height="512"></canvas>
+            </div>
+          </div>
+          <aside class="stack">
+            <label for="contrast">Contrast</label>
+            <input id="contrast" type="range" min="0.1" max="5" step="0.1" value="1.0">
+            <div class="small-note"><span id="contrastLabel">1.0</span></div>
+            <label class="autocorrect-toggle"><input id="fftAutoCorrect" type="checkbox" checked> Autocorrect</label>
+            <button id="detectPeaksBtn">Detect Peaks</button>
+            <button id="clearOverlayBtn" class="secondary">Clear Overlay</button>
+            <div class="plot-card">
+              <div id="tiltOutput" class="card-body small-note">No overlay - click to add peaks or use Detect Peaks.</div>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <section class="analysis-result result-card">
+      <div class="analysis-result-title">Result</div>
+      <div class="card-body">
+        <label for="apixSlider">Pixel Size (A/px)</label>
+        <input id="apixSlider" type="range" min="0.01" max="2.0" step="0.0001" value="1.0">
+        <div class="row" style="justify-content:center">
+          <input id="apixExact" type="text" value="1.0" style="width:120px">
+          <button id="apixSetBtn">Set</button>
+        </div>
+        <button id="addToTableBtn" class="success">Add to Table</button>
+      </div>
+    </section>
+    </section>
+    </div>
+  </main>
+
+  <div id="workspaceSplitter" class="workspace-splitter" role="separator" aria-label="Resize workspace and statistics panes"></div>
+
+  <section class="stats">
+    <div class="card stats-card">
+      <h2>Measurements</h2>
+      <div class="table-wrap measurements-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Region Size</th>
+              <th>Region Location</th>
+              <th>Pixel Size</th>
+              <th>Nominal</th>
+              <th>Group Statistics</th>
+            </tr>
+          </thead>
+          <tbody id="regionTable"></tbody>
+        </table>
+      </div>
+      <div class="card-body row stats-actions">
+        <button id="deleteSelectedBtn" class="danger">Delete Selected</button>
+        <button id="clearTableBtn" class="secondary">Clear Table</button>
+        <button id="downloadCsvBtn">Download Results</button>
+      </div>
+	    </div>
+	    <div id="statsSplitter" class="stats-splitter" role="separator" aria-label="Resize statistics table and plot"></div>
+	    <div class="card statistics-card">
+	      <h2>Statistics</h2>
+      <div class="plot-card">
+        <div id="statsPlot" class="plotly-plot stats-plot"></div>
+      </div>
+      <details class="stats-table-panel" open>
+        <summary>Grouped Statistics</summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nominal</th>
+                <th>N</th>
+                <th>Mean</th>
+                <th>Median</th>
+                <th>Std Dev</th>
+                <th>MAD</th>
+                <th>Min</th>
+                <th>Max</th>
+              </tr>
+            </thead>
+            <tbody id="statsSummaryBody"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <div id="status" class="status">Ready.</div>
+  <div id="hoverTip" class="hover-tip hidden"></div>
+  <div id="hoverCrosshair" class="hover-crosshair hidden">
+    <div class="crosshair-v"></div>
+    <div class="crosshair-h"></div>
+    <div class="crosshair-dot"></div>
+  </div>
+  <div id="zoomBox" class="zoom-box hidden"></div>
+
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]] },
+      svg: { fontCache: "global" }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+  <script id="app-script">
+  (() => {
+    "use strict";
+
+    const $ = (id) => document.getElementById(id);
+    const TWO_PI = Math.PI * 2;
+    const PLOT_BG = "#e7eef8";
+    const PLOT_TEXT = "#283c5f";
+    const PLOT_LINE = "#5b6dfb";
+    const PLOTLY_CONFIG = {
+      responsive: true,
+      scrollZoom: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: ["lasso2d", "select2d"],
+      toImageButtonOptions: { format: "png", filename: "magcal_plot", scale: 2 }
+    };
+
+    const el = {
+      downloadUrl: $("downloadUrl"),
+      fileInput: $("fileInput"),
+      autoSample: $("autoSample"),
+      autoSampleControls: $("autoSampleControls"),
+      autoSampleN: $("autoSampleN"),
+      autoSampleSize: $("autoSampleSize"),
+      autoSampleStartBtn: $("autoSampleStartBtn"),
+      uploadTable: $("uploadTable"),
+      uploadTableWrap: $("uploadTableWrap"),
+      uploadTableSummary: $("uploadTableSummary"),
+      urlControls: $("urlControls"),
+      uploadControls: $("uploadControls"),
+      nominalApix: $("nominalApix"),
+      resolutionType: $("resolutionType"),
+      customResolution: $("customResolution"),
+      customResolutionWrap: $("customResolutionWrap"),
+      imageCanvas: $("imageCanvas"),
+      layoutSplitter: $("layoutSplitter"),
+      workspaceSplitter: $("workspaceSplitter"),
+      powerPlot: $("powerPlot"),
+      heatmapPlot: $("heatmapPlot"),
+      fftCanvas: $("fftCanvas"),
+      nufftLogY: $("nufftLogY"),
+      autoCorrect: $("autoCorrect"),
+      fftAutoCorrect: $("fftAutoCorrect"),
+      nufftRSampling: $("nufftRSampling"),
+      nufftThetaSampling: $("nufftThetaSampling"),
+      nufftDisplayRange: $("nufftDisplayRange"),
+      nufftRLabel: $("nufftRLabel"),
+      nufftThetaLabel: $("nufftThetaLabel"),
+      nufftRangeLabel: $("nufftRangeLabel"),
+      nufftMeta: $("nufftMeta"),
+      contrast: $("contrast"),
+      contrastLabel: $("contrastLabel"),
+      detectPeaksBtn: $("detectPeaksBtn"),
+      clearOverlayBtn: $("clearOverlayBtn"),
+      tiltOutput: $("tiltOutput"),
+      apixSlider: $("apixSlider"),
+      apixExact: $("apixExact"),
+      apixSetBtn: $("apixSetBtn"),
+      addToTableBtn: $("addToTableBtn"),
+      regionTable: $("regionTable"),
+      statsSummaryBody: $("statsSummaryBody"),
+      deleteSelectedBtn: $("deleteSelectedBtn"),
+      clearTableBtn: $("clearTableBtn"),
+      downloadCsvBtn: $("downloadCsvBtn"),
+      statsSplitter: $("statsSplitter"),
+      statsPlot: $("statsPlot"),
+      status: $("status"),
+      hoverTip: $("hoverTip"),
+      hoverCrosshair: $("hoverCrosshair"),
+      zoomBox: $("zoomBox")
+    };
+
+    const state = {
+      image: null,
+      imageCache: new Map(),
+      uploads: [],
+      selectedUpload: -1,
+      selection: { x0: 250, x1: 800, y0: 250, y1: 800 },
+      region: null,
+      fft: null,
+      nufft: null,
+      nufftWorker: null,
+      tableRows: [],
+      statsGroups: [],
+      selectedTableRow: null,
+      editingTableRow: null,
+      hoveredTableRow: null,
+      drag: null,
+      powerPlot: null,
+      heatmapPlot: null,
+      statsPlot: null,
+      plotViews: { fft: null },
+      plotDrag: null,
+      plotlyBound: { power: false, heatmap: false, stats: false },
+      plotlyClamp: { power: false, heatmap: false },
+      plotRevision: 0,
+      suppressPlotClickUntil: 0,
+      workspaceManuallySized: false,
+      lastSelectionKey: "",
+      lastLoadedUrl: "",
+      urlLoadTimer: null,
+      urlLoadToken: 0,
+      batchRunning: false,
+      resizeFrame: null
+    };
+
+    function setStatus(message) {
+      el.status.textContent = message;
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function clamp(value, lo, hi) {
+      return Math.max(lo, Math.min(hi, value));
+    }
+
+    function fmt(value, digits = 3) {
+      if (!Number.isFinite(value)) return "n/a";
+      const abs = Math.abs(value);
+      if (abs >= 1000) return value.toFixed(0);
+      if (abs >= 100) return value.toFixed(1);
+      if (abs >= 10) return value.toFixed(2);
+      return value.toFixed(digits);
+    }
+
+    function showHoverTip(event, lines) {
+      if (!lines || !lines.length) {
+        hideHover();
+        return;
+      }
+      el.hoverTip.classList.remove("preview-tip", "latex-tip");
+      el.hoverTip.innerHTML = lines.map((line, idx) => {
+        const klass = idx === 0 ? "tip-title" : idx === lines.length - 1 ? "tip-muted" : "";
+        return `<div class="${klass}">${escapeHtml(line)}</div>`;
+      }).join("");
+      el.hoverTip.classList.remove("hidden");
+      moveHoverTip(event);
+    }
+
+    function showHoverHtmlTip(event, title, html) {
+      el.hoverTip.classList.remove("preview-tip");
+      el.hoverTip.classList.add("latex-tip");
+      el.hoverTip.innerHTML = `
+        <div class="tip-title">${escapeHtml(title)}</div>
+        <div class="tip-html">${html}</div>
+      `;
+      el.hoverTip.classList.remove("hidden");
+      moveHoverTip(event);
+      if (window.MathJax && window.MathJax.typesetPromise) {
+        const anchor = { clientX: event.clientX, clientY: event.clientY };
+        window.MathJax.typesetPromise([el.hoverTip]).then(() => moveHoverTip(anchor)).catch(() => {});
+      }
+    }
+
+    function showHoverPreview(event, title, imageSrc, lines = []) {
+      if (!imageSrc) {
+        showHoverTip(event, [
+          title,
+          "Preview screenshot is not available for this row.",
+          "This can happen for rows from earlier app versions, past uploads, or entries saved before thumbnails were captured.",
+          ...lines
+        ]);
+        return;
+      }
+      el.hoverTip.classList.remove("latex-tip");
+      el.hoverTip.classList.add("preview-tip");
+      const meta = lines.length
+        ? `<div class="tip-meta">${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>`
+        : "";
+      el.hoverTip.innerHTML = `
+        <div class="tip-title">${escapeHtml(title)}</div>
+        <div class="tip-media"><img src="${imageSrc}" alt=""></div>
+        ${meta}
+      `;
+      el.hoverTip.classList.remove("hidden");
+      moveHoverTip(event);
+    }
+
+    function moveHoverTip(event) {
+      if (el.hoverTip.classList.contains("hidden")) return;
+      const pad = 14;
+      const gap = 14;
+      const tipW = el.hoverTip.offsetWidth || 240;
+      const tipH = el.hoverTip.offsetHeight || 80;
+      let left = event.clientX + gap;
+      let top = event.clientY + gap;
+      if (left + tipW + pad > window.innerWidth) left = event.clientX - tipW - gap;
+      if (top + tipH + pad > window.innerHeight) top = event.clientY - tipH - gap;
+      el.hoverTip.style.left = `${Math.max(pad, left)}px`;
+      el.hoverTip.style.top = `${Math.max(pad, top)}px`;
+    }
+
+    function showCrosshair(canvas, event) {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const x = clamp(event.clientX - rect.left, 0, rect.width);
+      const y = clamp(event.clientY - rect.top, 0, rect.height);
+      el.hoverCrosshair.style.left = `${rect.left}px`;
+      el.hoverCrosshair.style.top = `${rect.top}px`;
+      el.hoverCrosshair.style.width = `${rect.width}px`;
+      el.hoverCrosshair.style.height = `${rect.height}px`;
+      el.hoverCrosshair.querySelector(".crosshair-v").style.left = `${x}px`;
+      el.hoverCrosshair.querySelector(".crosshair-h").style.top = `${y}px`;
+      const dot = el.hoverCrosshair.querySelector(".crosshair-dot");
+      dot.style.left = `${x}px`;
+      dot.style.top = `${y}px`;
+      el.hoverCrosshair.classList.remove("hidden");
+    }
+
+    function hideHover() {
+      el.hoverTip.classList.add("hidden");
+      el.hoverTip.classList.remove("preview-tip", "latex-tip");
+      el.hoverCrosshair.classList.add("hidden");
+    }
+
+    function showZoomBox(canvas, start, end) {
+      const rect = canvas.getBoundingClientRect();
+      const x0 = rect.left + Math.min(start.x, end.x) / canvas.width * rect.width;
+      const y0 = rect.top + Math.min(start.y, end.y) / canvas.height * rect.height;
+      const x1 = rect.left + Math.max(start.x, end.x) / canvas.width * rect.width;
+      const y1 = rect.top + Math.max(start.y, end.y) / canvas.height * rect.height;
+      el.zoomBox.style.left = `${x0}px`;
+      el.zoomBox.style.top = `${y0}px`;
+      el.zoomBox.style.width = `${Math.max(1, x1 - x0)}px`;
+      el.zoomBox.style.height = `${Math.max(1, y1 - y0)}px`;
+      el.zoomBox.classList.remove("hidden");
+    }
+
+    function hideZoomBox() {
+      el.zoomBox.classList.add("hidden");
+    }
+
+    function selectionKey(s = normalizedSelection()) {
+      return `${Math.round(s.x0)},${Math.round(s.x1)},${Math.round(s.y0)},${Math.round(s.y1)}`;
+    }
+
+    function ensurePlotly() {
+      if (!window.Plotly) throw new Error("Plotly.js failed to load.");
+      return window.Plotly;
+    }
+
+    function plotlyLayout(title, xTitle, yTitle, extra = {}) {
+      const { titleFontSize = 18, ...layoutExtra } = extra;
+      return {
+        title: {
+          text: title,
+          x: 0.02,
+          xanchor: "left",
+          font: { size: titleFontSize, color: PLOT_TEXT, family: "Inter, system-ui, sans-serif" }
+        },
+        font: { color: PLOT_TEXT, family: "Inter, system-ui, sans-serif", size: 13 },
+        paper_bgcolor: "#ffffff",
+        plot_bgcolor: PLOT_BG,
+        margin: { l: 68, r: 24, t: 56, b: 58 },
+        xaxis: {
+          title: { text: xTitle },
+          gridcolor: "#ffffff",
+          zerolinecolor: "#ffffff",
+          linecolor: "#d8e1ef",
+          ticks: "outside",
+          automargin: true
+        },
+        yaxis: {
+          title: { text: yTitle },
+          gridcolor: "#ffffff",
+          zerolinecolor: "#ffffff",
+          linecolor: "#d8e1ef",
+          ticks: "outside",
+          automargin: true
+        },
+        hovermode: "closest",
+        dragmode: "zoom",
+        showlegend: false,
+        ...layoutExtra
+      };
+    }
+
+    function repaintPlotlyAfterRender(element, renderResult) {
+      if (!element || !window.Plotly) return;
+      Promise.resolve(renderResult).then(() => {
+        requestAnimationFrame(() => {
+          if (!element.isConnected || !element._fullLayout) return;
+          Plotly.Plots.resize(element);
+          requestAnimationFrame(() => {
+            if (element.isConnected && element._fullLayout) Plotly.redraw(element);
+          });
+        });
+      });
+    }
+
+    function emptyPlot(element, title, text) {
+      if (!element || !window.Plotly) return;
+      const layout = plotlyLayout(title, "", "", {
+        xaxis: { visible: false },
+        yaxis: { visible: false },
+        annotations: [{
+          text,
+          x: 0.5,
+          y: 0.5,
+          xref: "paper",
+          yref: "paper",
+          showarrow: false,
+          font: { color: "#687385", size: 14 }
+        }]
+      });
+      Plotly.react(element, [], layout, PLOTLY_CONFIG);
+    }
+
+    function resizePlotlyPlots() {
+      if (!window.Plotly) return;
+      [el.powerPlot, el.heatmapPlot, el.statsPlot].forEach((node) => {
+        if (node) Plotly.Plots.resize(node);
+      });
+    }
+
+    function boundedRange(range, min, max) {
+      if (!range || range.length < 2 || !Number.isFinite(range[0]) || !Number.isFinite(range[1])) return null;
+      const lo = Math.min(range[0], range[1]);
+      const hi = Math.max(range[0], range[1]);
+      const fullSpan = max - min;
+      const span = hi - lo;
+      if (!(fullSpan > 0) || !(span > 0) || span >= fullSpan) return [min, max];
+      let nextLo = lo;
+      let nextHi = hi;
+      if (nextLo < min) {
+        nextLo = min;
+        nextHi = min + span;
+      }
+      if (nextHi > max) {
+        nextHi = max;
+        nextLo = max - span;
+      }
+      return range[0] <= range[1] ? [nextLo, nextHi] : [nextHi, nextLo];
+    }
+
+    function rangesDiffer(a, b) {
+      if (!a || !b) return false;
+      const eps = 1e-9;
+      return Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps;
+    }
+
+    function rangeExceedsBounds(range, min, max) {
+      if (!range || range.length < 2 || !Number.isFinite(range[0]) || !Number.isFinite(range[1])) return false;
+      const lo = Math.min(range[0], range[1]);
+      const hi = Math.max(range[0], range[1]);
+      const eps = Math.max(1e-9, Math.abs(max - min) * 1e-6);
+      return lo < min - eps || hi > max + eps;
+    }
+
+    function displayRangeForFrequencyRange(range, targetResolution) {
+      if (!range || range.length < 2 || !(targetResolution > 0)) return null;
+      const lo = Math.min(range[0], range[1]);
+      const hi = Math.max(range[0], range[1]);
+      if (!(hi > 0)) return Number(el.nufftDisplayRange.max);
+      const safeLo = Math.max(lo, 1e-12);
+      const resA = 1 / safeLo;
+      const resB = 1 / hi;
+      const pct = Math.max(
+        Math.abs(resA / targetResolution - 1),
+        Math.abs(resB / targetResolution - 1)
+      ) * 100;
+      return Number.isFinite(pct) ? pct : Number(el.nufftDisplayRange.max);
+    }
+
+    function requestDisplayRangeForPlot(kind, range) {
+      const n = state.nufft;
+      if (!n || !range || !state.region) return false;
+      const current = Number(el.nufftDisplayRange.value);
+      const max = Number(el.nufftDisplayRange.max);
+      const min = Number(el.nufftDisplayRange.min);
+      const step = Number(el.nufftDisplayRange.step) || 0.5;
+      const requested = displayRangeForFrequencyRange(range, n.targetResolution);
+      if (requested == null || requested <= current + step * 0.35) return false;
+      const next = clamp(Math.ceil(requested / step) * step, min, max);
+      if (next <= current + 1e-9) return false;
+      el.nufftDisplayRange.value = next.toFixed(1);
+      el.nufftRangeLabel.textContent = next.toFixed(1);
+      setStatus(`${kind === "power" ? "Radial profile" : "Heatmap"} range expanded to ${next.toFixed(1)}%.`);
+      startNufft();
+      return true;
+    }
+
+    function clampPlotlyView(kind, element, bounds) {
+      if (!window.Plotly || !element || !element._fullLayout || state.plotlyClamp[kind]) return;
+      const updates = {};
+      const xRange = element._fullLayout.xaxis && element._fullLayout.xaxis.range;
+      const yRange = element._fullLayout.yaxis && element._fullLayout.yaxis.range;
+      if (kind === "power" && bounds.x && rangeExceedsBounds(xRange, bounds.x[0], bounds.x[1]) &&
+          requestDisplayRangeForPlot(kind, xRange)) {
+        return;
+      }
+      if (kind === "heatmap" && bounds.y && rangeExceedsBounds(yRange, bounds.y[0], bounds.y[1]) &&
+          requestDisplayRangeForPlot(kind, yRange)) {
+        return;
+      }
+      if (bounds.x) {
+        const next = boundedRange(xRange, bounds.x[0], bounds.x[1]);
+        if (rangesDiffer(xRange, next)) updates["xaxis.range"] = next;
+      }
+      if (bounds.y) {
+        const next = boundedRange(yRange, bounds.y[0], bounds.y[1]);
+        if (rangesDiffer(yRange, next)) updates["yaxis.range"] = next;
+      }
+      if (!Object.keys(updates).length) return;
+      state.plotlyClamp[kind] = true;
+      Promise.resolve(Plotly.relayout(element, updates)).finally(() => {
+        state.plotlyClamp[kind] = false;
+      });
+    }
+
+    function rangeZoom(min, max, center, factor, fullMin, fullMax) {
+      const span = Math.max(1e-12, (max - min) * factor);
+      let nextMin = center - (center - min) * factor;
+      let nextMax = nextMin + span;
+      if (nextMin < fullMin) {
+        nextMin = fullMin;
+        nextMax = Math.min(fullMax, nextMin + span);
+      }
+      if (nextMax > fullMax) {
+        nextMax = fullMax;
+        nextMin = Math.max(fullMin, nextMax - span);
+      }
+      if (nextMax - nextMin >= fullMax - fullMin) return [fullMin, fullMax];
+      return [nextMin, nextMax];
+    }
+
+    function rangePan(min, max, delta, fullMin, fullMax) {
+      const span = max - min;
+      let nextMin = min + delta;
+      let nextMax = max + delta;
+      if (nextMin < fullMin) {
+        nextMin = fullMin;
+        nextMax = fullMin + span;
+      }
+      if (nextMax > fullMax) {
+        nextMax = fullMax;
+        nextMin = fullMax - span;
+      }
+      return [nextMin, nextMax];
+    }
+
+    function fftView(fft = state.fft) {
+      if (!fft) return null;
+      const view = state.plotViews.fft;
+      return view || { xMin: 0, xMax: fft.n, yMin: 0, yMax: fft.n };
+    }
+
+    function fftCanvasToData(point, fft = state.fft) {
+      const view = fftView(fft);
+      return {
+        x: clamp(view.xMin + point.x / el.fftCanvas.width * (view.xMax - view.xMin), 0, fft.n - 1),
+        y: clamp(view.yMin + point.y / el.fftCanvas.height * (view.yMax - view.yMin), 0, fft.n - 1)
+      };
+    }
+
+    function fftDataToCanvas(point, fft = state.fft) {
+      const view = fftView(fft);
+      return {
+        x: (point.x - view.xMin) / (view.xMax - view.xMin) * el.fftCanvas.width,
+        y: (point.y - view.yMin) / (view.yMax - view.yMin) * el.fftCanvas.height
+      };
+    }
+
+    function previousPowerOfTwo(n) {
+      let p = 1;
+      while (p * 2 <= n) p *= 2;
+      return p;
+    }
+
+    function nextPowerOfTwo(n) {
+      let p = 1;
+      while (p < n) p *= 2;
+      return p;
+    }
+
+    function parseNominal(filename) {
+      if (!filename) return 1.0;
+      const patterns = [
+        /nominal(\d+\.\d+)/i,
+        /pixel(\d+\.\d+)a?/i,
+        /apix(\d+\.\d+)/i,
+        /(\d+\.\d+)a(?:ngstrom)?/i,
+        /(\d+\.\d+)(?=\D|$)/i
+      ];
+      for (const pattern of patterns) {
+        const match = filename.match(pattern);
+        if (match) {
+          const value = Number(match[1]);
+          if (value >= 0.1 && value <= 5.0) return value;
+        }
+      }
+      return 1.0;
+    }
+
+    function getResolution() {
+      const type = el.resolutionType.value;
+      if (type.startsWith("Graphene")) return 2.13;
+      if (type.startsWith("Gold")) return 2.355;
+      if (type.startsWith("Ice")) return 3.661;
+      return Number(el.customResolution.value) || 3.0;
+    }
+
+    function setApix(value, updateSlider = true) {
+      const v = clamp(Number(value), 0.001, 6.0);
+      if (updateSlider) el.apixSlider.value = clamp(v, Number(el.apixSlider.min), Number(el.apixSlider.max));
+      el.apixExact.value = v.toFixed(4);
+    }
+
+    function percentile(data, p) {
+      const n = data.length;
+      if (!n) return 0;
+      const stride = Math.max(1, Math.floor(n / 500000));
+      const sample = [];
+      for (let i = 0; i < n; i += stride) sample.push(data[i]);
+      sample.sort((a, b) => a - b);
+      const idx = clamp(Math.floor((p / 100) * (sample.length - 1)), 0, sample.length - 1);
+      return sample[idx];
+    }
+
+    function normalizeToUint8(data, lowP = 1, highP = 99) {
+      const lo = percentile(data, lowP);
+      const hi = percentile(data, highP);
+      const out = new Uint8ClampedArray(data.length);
+      const scale = hi > lo ? 255 / (hi - lo) : 1;
+      for (let i = 0; i < data.length; i++) out[i] = clamp(Math.round((data[i] - lo) * scale), 0, 255);
+      return out;
+    }
+
+    function meanStd(data) {
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      const mean = sum / data.length;
+      let ss = 0;
+      for (let i = 0; i < data.length; i++) {
+        const d = data[i] - mean;
+        ss += d * d;
+      }
+      return [mean, Math.sqrt(ss / data.length)];
+    }
+
+    function median(values) {
+      const arr = Array.from(values).sort((a, b) => a - b);
+      if (!arr.length) return 0;
+      const mid = Math.floor(arr.length / 2);
+      return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+    }
+
+    function medianAbsDeviation(values) {
+      const med = median(values);
+      const dev = Array.from(values, (v) => Math.abs(v - med));
+      return median(dev) || 1e-8;
+    }
+
+    function resizeBilinear(src, sw, sh, dw, dh) {
+      const dst = new Float32Array(dw * dh);
+      const xScale = sw / dw;
+      const yScale = sh / dh;
+      for (let y = 0; y < dh; y++) {
+        const sy = (y + 0.5) * yScale - 0.5;
+        const y0 = clamp(Math.floor(sy), 0, sh - 1);
+        const y1 = clamp(y0 + 1, 0, sh - 1);
+        const wy = sy - y0;
+        for (let x = 0; x < dw; x++) {
+          const sx = (x + 0.5) * xScale - 0.5;
+          const x0 = clamp(Math.floor(sx), 0, sw - 1);
+          const x1 = clamp(x0 + 1, 0, sw - 1);
+          const wx = sx - x0;
+          const a = src[y0 * sw + x0];
+          const b = src[y0 * sw + x1];
+          const c = src[y1 * sw + x0];
+          const d = src[y1 * sw + x1];
+          dst[y * dw + x] = a * (1 - wx) * (1 - wy) + b * wx * (1 - wy) + c * (1 - wx) * wy + d * wx * wy;
+        }
+      }
+      return dst;
+    }
+
+    function downsampleForDisplay(src, sw, sh, targetMax = 1000) {
+      const binFactor = Math.max(1, Math.floor(Math.min(sw, sh) / targetMax));
+      const dw = Math.max(1, Math.floor(sw / binFactor));
+      const dh = Math.max(1, Math.floor(sh / binFactor));
+      if (binFactor === 1) {
+        return { data: new Float32Array(src), width: sw, height: sh, scaleX: 1, scaleY: 1 };
+      }
+      const data = new Float32Array(dw * dh);
+      for (let y = 0; y < dh; y++) {
+        for (let x = 0; x < dw; x++) {
+          let sum = 0;
+          let count = 0;
+          const y0 = y * binFactor;
+          const x0 = x * binFactor;
+          for (let yy = 0; yy < binFactor && y0 + yy < sh; yy++) {
+            const off = (y0 + yy) * sw + x0;
+            for (let xx = 0; xx < binFactor && x0 + xx < sw; xx++) {
+              sum += src[off + xx];
+              count++;
+            }
+          }
+          data[y * dw + x] = count ? sum / count : 0;
+        }
+      }
+      return { data, width: dw, height: dh, scaleX: sw / dw, scaleY: sh / dh };
+    }
+
+    async function decodeRasterWithBrowser(buffer, type) {
+      const blob = new Blob([buffer], { type });
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0);
+      const rgba = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const gray = new Float32Array(bitmap.width * bitmap.height);
+      for (let i = 0, j = 0; i < gray.length; i++, j += 4) {
+        gray[i] = 0.299 * rgba[j] + 0.587 * rgba[j + 1] + 0.114 * rgba[j + 2];
+      }
+      return { data: gray, width: bitmap.width, height: bitmap.height };
+    }
+
+    function decodeTiff(buffer) {
+      const dv = new DataView(buffer);
+      const order = String.fromCharCode(dv.getUint8(0), dv.getUint8(1));
+      const little = order === "II";
+      if (!little && order !== "MM") throw new Error("Invalid TIFF byte order.");
+      if (dv.getUint16(2, little) !== 42) throw new Error("Invalid TIFF header.");
+      const ifdOffset = dv.getUint32(4, little);
+      const entryCount = dv.getUint16(ifdOffset, little);
+      const tags = new Map();
+
+      const typeSize = (type) => {
+        if (type === 1 || type === 2 || type === 6 || type === 7) return 1;
+        if (type === 3 || type === 8) return 2;
+        if (type === 4 || type === 9 || type === 11 || type === 13) return 4;
+        if (type === 5 || type === 10 || type === 12) return 8;
+        throw new Error(`Unsupported TIFF field type ${type}.`);
+      };
+
+      const readOne = (offset, type) => {
+        if (type === 1 || type === 7) return dv.getUint8(offset);
+        if (type === 6) return dv.getInt8(offset);
+        if (type === 3) return dv.getUint16(offset, little);
+        if (type === 8) return dv.getInt16(offset, little);
+        if (type === 4 || type === 13) return dv.getUint32(offset, little);
+        if (type === 9) return dv.getInt32(offset, little);
+        if (type === 11) return dv.getFloat32(offset, little);
+        if (type === 12) return dv.getFloat64(offset, little);
+        if (type === 5) return dv.getUint32(offset, little) / Math.max(1, dv.getUint32(offset + 4, little));
+        if (type === 10) return dv.getInt32(offset, little) / Math.max(1, dv.getInt32(offset + 4, little));
+        return 0;
+      };
+
+      for (let i = 0; i < entryCount; i++) {
+        const off = ifdOffset + 2 + i * 12;
+        const tag = dv.getUint16(off, little);
+        const type = dv.getUint16(off + 2, little);
+        const count = dv.getUint32(off + 4, little);
+        const bytes = typeSize(type) * count;
+        const valueOffset = bytes <= 4 ? off + 8 : dv.getUint32(off + 8, little);
+        const values = [];
+        for (let j = 0; j < count; j++) values.push(readOne(valueOffset + j * typeSize(type), type));
+        tags.set(tag, count === 1 ? values[0] : values);
+      }
+
+      const width = Number(tags.get(256));
+      const height = Number(tags.get(257));
+      const compression = Number(tags.get(259) || 1);
+      const photometric = Number(tags.get(262) || 1);
+      const samplesPerPixel = Number(tags.get(277) || 1);
+      const sampleFormat = Number(Array.isArray(tags.get(339)) ? tags.get(339)[0] : (tags.get(339) || 1));
+      const bitsRaw = tags.get(258) || 8;
+      const bitsPerSample = Number(Array.isArray(bitsRaw) ? bitsRaw[0] : bitsRaw);
+      const stripOffsets = Array.isArray(tags.get(273)) ? tags.get(273) : [tags.get(273)];
+      const stripByteCounts = Array.isArray(tags.get(279)) ? tags.get(279) : [tags.get(279)];
+      if (!width || !height || !stripOffsets[0]) throw new Error("Missing required TIFF image tags.");
+      if (compression !== 1) throw new Error("Only uncompressed TIFF files are supported in this single-file build.");
+      if (![8, 16, 32].includes(bitsPerSample)) throw new Error(`Unsupported TIFF bit depth ${bitsPerSample}.`);
+
+      const bytesPerSample = bitsPerSample / 8;
+      const gray = new Float32Array(width * height);
+      let pixelIndex = 0;
+      const readSample = (offset) => {
+        if (bitsPerSample === 8) return sampleFormat === 2 ? dv.getInt8(offset) : dv.getUint8(offset);
+        if (bitsPerSample === 16) return sampleFormat === 2 ? dv.getInt16(offset, little) : dv.getUint16(offset, little);
+        return sampleFormat === 3 ? dv.getFloat32(offset, little) : dv.getUint32(offset, little);
+      };
+
+      for (let s = 0; s < stripOffsets.length && pixelIndex < gray.length; s++) {
+        const start = Number(stripOffsets[s]);
+        const end = start + Number(stripByteCounts[s] || 0);
+        for (let off = start; off < end && pixelIndex < gray.length; off += bytesPerSample * samplesPerPixel) {
+          if (samplesPerPixel >= 3) {
+            const r = readSample(off);
+            const g = readSample(off + bytesPerSample);
+            const b = readSample(off + bytesPerSample * 2);
+            gray[pixelIndex++] = 0.299 * r + 0.587 * g + 0.114 * b;
+          } else {
+            gray[pixelIndex++] = readSample(off);
+          }
+        }
+      }
+      if (photometric === 0) {
+        let max = -Infinity;
+        for (let i = 0; i < gray.length; i++) if (gray[i] > max) max = gray[i];
+        for (let i = 0; i < gray.length; i++) gray[i] = max - gray[i];
+      }
+      return { data: gray, width, height };
+    }
+
+    function decodeMrc(buffer) {
+      const dv = new DataView(buffer);
+      const nx = dv.getInt32(0, true);
+      const ny = dv.getInt32(4, true);
+      const nz = Math.max(1, dv.getInt32(8, true));
+      const mode = dv.getInt32(12, true);
+      if (nx <= 0 || ny <= 0 || nx > 100000 || ny > 100000) throw new Error("Invalid MRC dimensions.");
+      const pixels = nx * ny;
+      const offset = 1024;
+      const out = new Float32Array(pixels);
+      if (mode === 0) {
+        const src = new Int8Array(buffer, offset, pixels);
+        for (let i = 0; i < pixels; i++) out[i] = src[i];
+      } else if (mode === 1) {
+        for (let i = 0; i < pixels; i++) out[i] = dv.getInt16(offset + i * 2, true);
+      } else if (mode === 2) {
+        for (let i = 0; i < pixels; i++) out[i] = dv.getFloat32(offset + i * 4, true);
+      } else if (mode === 6) {
+        for (let i = 0; i < pixels; i++) out[i] = dv.getUint16(offset + i * 2, true);
+      } else {
+        throw new Error(`Unsupported MRC mode ${mode}.`);
+      }
+      let apix = 1.0;
+      try {
+        const mx = dv.getInt32(28, true) || nx;
+        const cellA = dv.getFloat32(40, true);
+        if (cellA > 0 && mx > 0) apix = cellA / mx;
+      } catch (_) {}
+      return { data: out, width: nx, height: ny, apix, slices: nz };
+    }
+
+    async function decodeImageBuffer(name, buffer, mime = "") {
+      const lower = name.toLowerCase();
+      if (lower.endsWith(".mrc")) return decodeMrc(buffer);
+      if (lower.endsWith(".tif") || lower.endsWith(".tiff")) return decodeTiff(buffer);
+      return decodeRasterWithBrowser(buffer, mime || "image/png");
+    }
+
+    function urlSourceKey(url) {
+      return `url:${url}`;
+    }
+
+    function uploadSourceKey(file, idx) {
+      return `upload:${idx}:${file.name}:${file.size}:${file.lastModified || 0}`;
+    }
+
+    function fallbackSourceKey(filename, decoded) {
+      return `image:${filename}:${decoded.width}x${decoded.height}`;
+    }
+
+    function cacheDecodedImage(sourceKey, decoded, filename) {
+      if (!sourceKey || !decoded) return;
+      state.imageCache.set(sourceKey, { decoded, filename });
+    }
+
+    function setImage(decoded, filename, options = {}) {
+      const {
+        autoCalculate = true,
+        sourceKey = fallbackSourceKey(filename, decoded),
+        keepTableEdit = false
+      } = options;
+      cacheDecodedImage(sourceKey, decoded, filename);
+      if (!keepTableEdit) {
+        state.editingTableRow = null;
+        updateTableActionButton();
+      }
+      const display = downsampleForDisplay(decoded.data, decoded.width, decoded.height);
+      const display8 = normalizeToUint8(display.data, 1, 99);
+      state.image = {
+        filename,
+        sourceKey,
+        data: decoded.data,
+        width: decoded.width,
+        height: decoded.height,
+        displayData: display.data,
+        display8,
+        displayWidth: display.width,
+        displayHeight: display.height,
+        scaleX: display.scaleX,
+        scaleY: display.scaleY
+      };
+      const nominal = parseNominal(filename);
+      el.nominalApix.value = nominal.toFixed(3);
+      setApix(nominal);
+      state.selection = defaultSelection(display.width, display.height);
+      state.fft = null;
+      state.nufft = null;
+      state.plotViews = { fft: null };
+      state.plotRevision += 1;
+      state.lastSelectionKey = "";
+      drawImage();
+      drawFft();
+      drawPowerPlaceholder();
+      drawHeatmapPlaceholder("Click the power curve after NuFFT finishes.");
+      setStatus(`Loaded ${filename}: ${decoded.width} x ${decoded.height}.`);
+      if (autoCalculate) calculateAll();
+    }
+
+    function defaultSelection(w, h) {
+      if (w >= 800 && h >= 800) {
+        return { x0: 250, x1: 800, y0: 250, y1: 800 };
+      }
+      const x0 = clamp(Math.round(w * 0.25), 0, w - 1);
+      const x1 = clamp(Math.round(w * 0.80), x0 + 1, w);
+      const y0 = clamp(Math.round(h * 0.25), 0, h - 1);
+      const y1 = clamp(Math.round(h * 0.80), y0 + 1, h);
+      return { x0, x1, y0, y1 };
+    }
+
+    function drawGrayToCanvas(canvas, width, height, gray8) {
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      const imageData = ctx.createImageData(width, height);
+      for (let i = 0, j = 0; i < gray8.length; i++, j += 4) {
+        const v = gray8[i];
+        imageData.data[j] = v;
+        imageData.data[j + 1] = v;
+        imageData.data[j + 2] = v;
+        imageData.data[j + 3] = 255;
+      }
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    function drawImage() {
+      const img = state.image;
+      const canvas = el.imageCanvas;
+      if (!img) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      drawGrayToCanvas(canvas, img.displayWidth, img.displayHeight, img.display8);
+      const ctx = canvas.getContext("2d");
+      const s = normalizedSelection();
+      ctx.save();
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = Math.max(2, img.displayWidth / 500);
+      ctx.setLineDash([10, 6]);
+      ctx.strokeRect(s.x0, s.y0, s.x1 - s.x0, s.y1 - s.y0);
+      ctx.fillStyle = "rgba(37,99,235,0.10)";
+      ctx.fillRect(s.x0, s.y0, s.x1 - s.x0, s.y1 - s.y0);
+      ctx.restore();
+    }
+
+    function canvasPoint(canvas, event) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (event.clientX - rect.left) * canvas.width / rect.width,
+        y: (event.clientY - rect.top) * canvas.height / rect.height
+      };
+    }
+
+    function normalizedSelection() {
+      const s = state.selection;
+      return {
+        x0: Math.min(s.x0, s.x1),
+        x1: Math.max(s.x0, s.x1),
+        y0: Math.min(s.y0, s.y1),
+        y1: Math.max(s.y0, s.y1)
+      };
+    }
+
+    function extractCurrentRegion() {
+      const img = state.image;
+      if (!img) throw new Error("No image loaded.");
+      const s = normalizedSelection();
+      const width = Math.max(50, s.x1 - s.x0);
+      const height = Math.max(50, s.y1 - s.y0);
+      const square = Math.min(width, height);
+      const cx = (s.x0 + s.x1) / 2;
+      const cy = (s.y0 + s.y1) / 2;
+      const ds = {
+        x0: cx - square / 2,
+        x1: cx + square / 2,
+        y0: cy - square / 2,
+        y1: cy + square / 2
+      };
+      let ox0 = Math.round(ds.x0 * img.scaleX);
+      let ox1 = Math.round(ds.x1 * img.scaleX);
+      let oy0 = Math.round(ds.y0 * img.scaleY);
+      let oy1 = Math.round(ds.y1 * img.scaleY);
+      ox0 = clamp(ox0, 0, img.width - 1);
+      oy0 = clamp(oy0, 0, img.height - 1);
+      ox1 = clamp(ox1, ox0 + 2, img.width);
+      oy1 = clamp(oy1, oy0 + 2, img.height);
+      const side = Math.min(ox1 - ox0, oy1 - oy0);
+      ox1 = ox0 + side;
+      oy1 = oy0 + side;
+      const out = new Float32Array(side * side);
+      for (let y = 0; y < side; y++) {
+        const srcStart = (oy0 + y) * img.width + ox0;
+        out.set(img.data.subarray(srcStart, srcStart + side), y * side);
+      }
+      return {
+        data: out,
+        size: side,
+        displaySelection: ds,
+        location: { x0: Math.round(ds.x0), x1: Math.round(ds.x1), y0: Math.round(ds.y0), y1: Math.round(ds.y1) }
+      };
+    }
+
+    function makeBitReverse(n) {
+      const bits = Math.round(Math.log2(n));
+      const rev = new Uint32Array(n);
+      for (let i = 0; i < n; i++) {
+        let x = i;
+        let y = 0;
+        for (let b = 0; b < bits; b++) {
+          y = (y << 1) | (x & 1);
+          x >>= 1;
+        }
+        rev[i] = y;
+      }
+      return rev;
+    }
+
+    function fft1d(real, imag, rev) {
+      const n = real.length;
+      for (let i = 0; i < n; i++) {
+        const j = rev[i];
+        if (j > i) {
+          let tr = real[i]; real[i] = real[j]; real[j] = tr;
+          let ti = imag[i]; imag[i] = imag[j]; imag[j] = ti;
+        }
+      }
+      for (let len = 2; len <= n; len <<= 1) {
+        const half = len >> 1;
+        const theta = -TWO_PI / len;
+        const wpr = Math.cos(theta);
+        const wpi = Math.sin(theta);
+        for (let start = 0; start < n; start += len) {
+          let wr = 1;
+          let wi = 0;
+          for (let k = 0; k < half; k++) {
+            const i = start + k;
+            const j = i + half;
+            const tr = wr * real[j] - wi * imag[j];
+            const ti = wr * imag[j] + wi * real[j];
+            real[j] = real[i] - tr;
+            imag[j] = imag[i] - ti;
+            real[i] += tr;
+            imag[i] += ti;
+            const nwr = wr * wpr - wi * wpi;
+            wi = wr * wpi + wi * wpr;
+            wr = nwr;
+          }
+        }
+      }
+    }
+
+    function chooseFftSize(regionSize, nominalApix, resolution) {
+      return clamp(nextPowerOfTwo(regionSize), 128, 4096);
+    }
+
+    function computeFftMagnitude(region, n) {
+      const normRegion = normalizeToUint8(region.data, 1, 99);
+      const norm = new Uint8ClampedArray(n * n);
+      if (region.size <= n) {
+        for (let y = 0; y < region.size; y++) {
+          norm.set(normRegion.subarray(y * region.size, (y + 1) * region.size), y * n);
+        }
+      } else {
+        const start = Math.floor((region.size - n) / 2);
+        for (let y = 0; y < n; y++) {
+          const srcStart = (start + y) * region.size + start;
+          norm.set(normRegion.subarray(srcStart, srcStart + n), y * n);
+        }
+      }
+      const real = new Float64Array(n * n);
+      const imag = new Float64Array(n * n);
+      for (let i = 0; i < norm.length; i++) real[i] = norm[i];
+      const rev = makeBitReverse(n);
+      const rowR = new Float64Array(n);
+      const rowI = new Float64Array(n);
+      for (let y = 0; y < n; y++) {
+        const off = y * n;
+        rowR.set(real.subarray(off, off + n));
+        rowI.fill(0);
+        fft1d(rowR, rowI, rev);
+        real.set(rowR, off);
+        imag.set(rowI, off);
+      }
+      const colR = new Float64Array(n);
+      const colI = new Float64Array(n);
+      for (let x = 0; x < n; x++) {
+        for (let y = 0; y < n; y++) {
+          const idx = y * n + x;
+          colR[y] = real[idx];
+          colI[y] = imag[idx];
+        }
+        fft1d(colR, colI, rev);
+        for (let y = 0; y < n; y++) {
+          const idx = y * n + x;
+          real[idx] = colR[y];
+          imag[idx] = colI[y];
+        }
+      }
+      const mag = new Float32Array(n * n);
+      for (let y = 0; y < n; y++) {
+        const sy = (y + n / 2) % n;
+        for (let x = 0; x < n; x++) {
+          const sx = (x + n / 2) % n;
+          const src = sy * n + sx;
+          mag[y * n + x] = Math.hypot(real[src], imag[src]);
+        }
+      }
+      return mag;
+    }
+
+    function magnitudeToDisplay(mag, contrast) {
+      const [mean, std] = meanStd(mag);
+      let max = 0;
+      for (let i = 0; i < mag.length; i++) if (mag[i] > max) max = mag[i];
+      const hi = Math.min(max, mean + contrast * std);
+      const out = new Uint8ClampedArray(mag.length);
+      const scale = hi > 0 ? 255 / hi : 1;
+      for (let i = 0; i < mag.length; i++) out[i] = clamp(Math.round(mag[i] * scale), 0, 255);
+      return out;
+    }
+
+    async function calculateAll() {
+      if (!state.image) return;
+      try {
+        state.region = extractCurrentRegion();
+        const nominal = Number(el.nominalApix.value) || 1;
+        const resolution = getResolution();
+        const fftN = chooseFftSize(state.region.size, nominal, resolution);
+        state.plotViews.fft = null;
+        state.lastSelectionKey = selectionKey();
+        setStatus(`Computing matched ${fftN} x ${fftN} FFT...`);
+        await sleep(30);
+        const mag = computeFftMagnitude(state.region, fftN);
+        state.fft = {
+          n: fftN,
+          mag,
+          display: magnitudeToDisplay(mag, Number(el.contrast.value)),
+          peaks: [],
+          shape: null,
+          tilt: null
+        };
+        drawFft();
+        setStatus(`FFT ready. Computing matched radial profile...`);
+        await sleep(30);
+        await startNufft();
+        return true;
+      } catch (err) {
+        console.error(err);
+        setStatus(`Error: ${err.message}`);
+        return false;
+      }
+    }
+
+    function sampleRegionForNufft(region, maxPoints = 4096) {
+      const size = region.size;
+      const norm = normalizeToUint8(region.data, 1, 99);
+      let globalMean = 0;
+      for (let i = 0; i < norm.length; i++) globalMean += norm[i];
+      globalMean /= norm.length;
+      const stride = Math.max(1, Math.ceil(Math.sqrt((size * size) / maxPoints)));
+      const nx = Math.ceil(size / stride);
+      const ny = Math.ceil(size / stride);
+      const count = nx * ny;
+      const xs = new Float32Array(count);
+      const ys = new Float32Array(count);
+      const vals = new Float32Array(count);
+      let k = 0;
+      const center = (size - 1) / 2;
+      for (let by = 0; by < size; by += stride) {
+        const yEnd = Math.min(size, by + stride);
+        for (let bx = 0; bx < size; bx += stride) {
+          const xEnd = Math.min(size, bx + stride);
+          let sum = 0;
+          let n = 0;
+          for (let y = by; y < yEnd; y++) {
+            const off = y * size;
+            for (let x = bx; x < xEnd; x++) {
+              sum += norm[off + x];
+              n++;
+            }
+          }
+          const cx = (bx + xEnd - 1) / 2;
+          const cy = (by + yEnd - 1) / 2;
+          const wx = 0.5 - 0.5 * Math.cos(TWO_PI * cx / Math.max(1, size - 1));
+          const wy = 0.5 - 0.5 * Math.cos(TWO_PI * cy / Math.max(1, size - 1));
+          xs[k] = cx - center;
+          ys[k] = cy - center;
+          vals[k] = ((sum / n) - globalMean) * wx * wy * n;
+          k++;
+        }
+      }
+      return { xs: xs.subarray(0, k), ys: ys.subarray(0, k), vals: vals.subarray(0, k), count: k };
+    }
+
+    function createNufftWorker() {
+      const source = `
+        self.onmessage = (event) => {
+          const m = event.data;
+          const xs = new Float32Array(m.xs);
+          const ys = new Float32Array(m.ys);
+          const vals = new Float32Array(m.vals);
+          const targetResolution = m.targetResolution;
+          const rangeFrac = m.displayRange / 100;
+          const resMin = targetResolution * (1 - rangeFrac);
+          const resMax = targetResolution * (1 + rangeFrac);
+          const freqStart = 1 / resMin;
+          const freqEnd = 1 / resMax;
+          const freqStep = m.rSamples > 1 ? (freqEnd - freqStart) / (m.rSamples - 1) : 0;
+          const freqs = new Float32Array(m.rSamples);
+          const resolutions = new Float32Array(m.rSamples);
+          for (let i = 0; i < m.rSamples; i++) {
+            freqs[i] = freqStart + freqStep * i;
+            resolutions[i] = 1 / freqs[i];
+          }
+          const pwr2d = new Float32Array(m.thetaSamples * m.rSamples);
+          const curve = new Float64Array(m.rSamples);
+          const TWO_PI = Math.PI * 2;
+          for (let t = 0; t < m.thetaSamples; t++) {
+            const theta = Math.PI * t / m.thetaSamples;
+            const ct = Math.cos(theta);
+            const st = Math.sin(theta);
+            const real = new Float64Array(m.rSamples);
+            const imag = new Float64Array(m.rSamples);
+            for (let p = 0; p < xs.length; p++) {
+              const projection = m.nominalApix * (xs[p] * ct + ys[p] * st);
+              const phase0 = -TWO_PI * freqStart * projection;
+              const phaseStep = -TWO_PI * freqStep * projection;
+              let zr = Math.cos(phase0);
+              let zi = Math.sin(phase0);
+              const sr = Math.cos(phaseStep);
+              const si = Math.sin(phaseStep);
+              const v = vals[p];
+              for (let r = 0; r < m.rSamples; r++) {
+                real[r] += v * zr;
+                imag[r] += v * zi;
+                const nzr = zr * sr - zi * si;
+                zi = zr * si + zi * sr;
+                zr = nzr;
+              }
+            }
+            const row = t * m.rSamples;
+            for (let r = 0; r < m.rSamples; r++) {
+              const amp = Math.hypot(real[r], imag[r]);
+              pwr2d[row + r] = amp;
+              if (amp > curve[r]) curve[r] = amp;
+            }
+            if (t % 8 === 0) self.postMessage({ type: "progress", done: t, total: m.thetaSamples });
+          }
+          const curveArray = Array.from(curve);
+          curveArray.sort((a, b) => a - b);
+          const med = curveArray[Math.floor(curveArray.length / 2)] || 0;
+          const dev = curveArray.map((v) => Math.abs(v - med)).sort((a, b) => a - b);
+          const mad = dev[Math.floor(dev.length / 2)] || 1e-8;
+          const pwrCurve = new Float32Array(m.rSamples);
+          for (let i = 0; i < m.rSamples; i++) pwrCurve[i] = (curve[i] - med) / mad;
+          self.postMessage({
+            type: "done",
+            pwrCurve: pwrCurve.buffer,
+            pwr2d: pwr2d.buffer,
+            freqs: freqs.buffer,
+            resolutions: resolutions.buffer,
+            rSamples: m.rSamples,
+            thetaSamples: m.thetaSamples,
+            points: xs.length
+          }, [pwrCurve.buffer, pwr2d.buffer, freqs.buffer, resolutions.buffer]);
+        };
+      `;
+      return new Worker(URL.createObjectURL(new Blob([source], { type: "application/javascript" })));
+    }
+
+    function samplePolarFromFft(fft, nominalApix, targetResolution, displayRange, rSamples, thetaSamples) {
+      const resMin = targetResolution * (1 - displayRange / 100);
+      const resMax = targetResolution * (1 + displayRange / 100);
+      const freqStart = 1 / resMin;
+      const freqEnd = 1 / resMax;
+      const freqStep = rSamples > 1 ? (freqEnd - freqStart) / (rSamples - 1) : 0;
+      const freqs = new Float32Array(rSamples);
+      const resolutions = new Float32Array(rSamples);
+      for (let i = 0; i < rSamples; i++) {
+        freqs[i] = freqStart + freqStep * i;
+        resolutions[i] = 1 / freqs[i];
+      }
+
+      const n = fft.n;
+      const cx = n / 2;
+      const cy = n / 2;
+      const pwr2d = new Float32Array(thetaSamples * rSamples);
+      const curve = new Float64Array(rSamples);
+      for (let t = 0; t < thetaSamples; t++) {
+        const theta = Math.PI * t / thetaSamples;
+        const ct = Math.cos(theta);
+        const st = Math.sin(theta);
+        const row = t * rSamples;
+        for (let r = 0; r < rSamples; r++) {
+          const radius = n * nominalApix * freqs[r];
+          const x = cx + radius * ct;
+          const y = cy + radius * st;
+          let value = 0;
+          const x0 = Math.floor(x);
+          const y0 = Math.floor(y);
+          if (x0 >= 0 && x0 < n - 1 && y0 >= 0 && y0 < n - 1) {
+            const wx = x - x0;
+            const wy = y - y0;
+            const i00 = y0 * n + x0;
+            const i10 = i00 + 1;
+            const i01 = i00 + n;
+            const i11 = i01 + 1;
+            value =
+              (1 - wx) * (1 - wy) * fft.mag[i00] +
+              wx * (1 - wy) * fft.mag[i10] +
+              (1 - wx) * wy * fft.mag[i01] +
+              wx * wy * fft.mag[i11];
+          }
+          pwr2d[row + r] = value;
+          if (value > curve[r]) curve[r] = value;
+        }
+      }
+
+      const sorted = Array.from(curve).sort((a, b) => a - b);
+      const med = sorted[Math.floor(sorted.length / 2)] || 0;
+      const dev = Array.from(curve, (v) => Math.abs(v - med)).sort((a, b) => a - b);
+      const mad = dev[Math.floor(dev.length / 2)] || 1e-8;
+      const pwrCurve = new Float32Array(rSamples);
+      for (let i = 0; i < rSamples; i++) pwrCurve[i] = (curve[i] - med) / mad;
+
+      return { pwrCurve, pwr2d, freqs, resolutions };
+    }
+
+    function startNufft() {
+      if (!state.region) return Promise.resolve(null);
+      if (state.nufftWorker) state.nufftWorker.terminate();
+      if (!state.fft) return Promise.resolve(null);
+      const nominal = Number(el.nominalApix.value) || 1;
+      const resolution = getResolution();
+      const displayRange = Number(el.nufftDisplayRange.value);
+      const rSamples = Math.min(Math.max(80, Math.floor(0.5 * state.region.size * Number(el.nufftRSampling.value))), 10000);
+      const thetaSamples = Math.min(Math.max(36, Math.floor(360 * Number(el.nufftThetaSampling.value))), 1800);
+      setStatus(`Sampling matched radial profile (${rSamples} radial x ${thetaSamples} angular)...`);
+      return new Promise((resolve) => window.setTimeout(() => {
+        const sampled = samplePolarFromFft(state.fft, nominal, resolution, displayRange, rSamples, thetaSamples);
+        state.nufft = {
+          pwrCurve: sampled.pwrCurve,
+          pwr2d: sampled.pwr2d,
+          freqs: sampled.freqs,
+          resolutions: sampled.resolutions,
+          rSamples,
+          thetaSamples,
+          points: state.fft.n * state.fft.n,
+          nominalApix: nominal,
+          targetResolution: resolution,
+          revision: ++state.plotRevision,
+          clickedFreq: null
+        };
+        el.nufftMeta.textContent = `${rSamples} radial x ${thetaSamples} angular samples from the full ${state.fft.n} x ${state.fft.n} FFT grid.`;
+        renderPowerCurve();
+        const peak = findBestPowerPeak();
+        if (peak) {
+          state.nufft.clickedFreq = peak.freq;
+          const apix = nominal * (peak.freq / (1 / resolution));
+          setApix(apix);
+          renderPowerCurve(peak.freq);
+          renderHeatmap(peak.freq);
+        }
+        setStatus("NuFFT ready.");
+        resolve(state.nufft);
+      }, 20));
+    }
+
+    function fitEllipseFixedCenter(points, cx, cy) {
+      if (points.length < 3) return null;
+      let best = null;
+      let bestErr = Infinity;
+      const centered = points.map((p) => [p.x - cx, p.y - cy]);
+      for (let deg = -90; deg <= 90; deg += 2) {
+        const theta = deg * Math.PI / 180;
+        const ct = Math.cos(theta);
+        const st = Math.sin(theta);
+        let sXX = 0, sXY = 0, sYY = 0, sX = 0, sY = 0;
+        for (const [x, y] of centered) {
+          const xr = x * ct + y * st;
+          const yr = -x * st + y * ct;
+          const X = xr * xr;
+          const Y = yr * yr;
+          sXX += X * X;
+          sXY += X * Y;
+          sYY += Y * Y;
+          sX += X;
+          sY += Y;
+        }
+        const det = sXX * sYY - sXY * sXY;
+        if (Math.abs(det) < 1e-10) continue;
+        const u = (sX * sYY - sY * sXY) / det;
+        const v = (sXX * sY - sXY * sX) / det;
+        if (u <= 0 || v <= 0) continue;
+        const a = Math.sqrt(1 / u);
+        const b = Math.sqrt(1 / v);
+        let err = 0;
+        for (const [x, y] of centered) {
+          const xr = x * ct + y * st;
+          const yr = -x * st + y * ct;
+          const r = (xr * xr) / (a * a) + (yr * yr) / (b * b) - 1;
+          err += r * r;
+        }
+        if (err < bestErr) {
+          bestErr = err;
+          best = { a, b, theta };
+        }
+      }
+      return best;
+    }
+
+    function ellipseFitIsUsable(fit) {
+      if (!fit) return false;
+      const small = Math.min(fit.a, fit.b);
+      const large = Math.max(fit.a, fit.b);
+      return Number.isFinite(small) && Number.isFinite(large) && small > 0 && large > 0;
+    }
+
+    function calculateTilt(smallAxis, largeAxis) {
+      if (largeAxis <= 0) return 0;
+      return Math.acos(clamp(smallAxis / largeAxis, -1, 1));
+    }
+
+    function drawFft() {
+      const fft = state.fft;
+      const canvas = el.fftCanvas;
+      const ctx = canvas.getContext("2d");
+      if (!fft) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      canvas.width = fft.n;
+      canvas.height = fft.n;
+      const view = fftView(fft);
+      const imageData = ctx.createImageData(canvas.width, canvas.height);
+      const spanX = view.xMax - view.xMin;
+      const spanY = view.yMax - view.yMin;
+      for (let y = 0, j = 0; y < canvas.height; y++) {
+        const sy = clamp(Math.floor(view.yMin + y / Math.max(1, canvas.height - 1) * spanY), 0, fft.n - 1);
+        for (let x = 0; x < canvas.width; x++, j += 4) {
+          const sx = clamp(Math.floor(view.xMin + x / Math.max(1, canvas.width - 1) * spanX), 0, fft.n - 1);
+          const v = fft.display[sy * fft.n + sx];
+          imageData.data[j] = v;
+          imageData.data[j + 1] = v;
+          imageData.data[j + 2] = v;
+          imageData.data[j + 3] = 255;
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      ctx.save();
+      const overlayScale = 1;
+      const zoomScale = clamp((fft.n / Math.max(1, spanX) + fft.n / Math.max(1, spanY)) / 2, 1, 64);
+      ctx.lineWidth = (Math.max(1, fft.n / 512) + 2) * zoomScale;
+      ctx.strokeStyle = "#00a6a6";
+      ctx.setLineDash([12 * zoomScale, 8 * zoomScale]);
+      const project = (x, y) => fftDataToCanvas({ x, y }, fft);
+      if (fft.shape) {
+        if (fft.shape.type === "circle") {
+          const radius = fft.shape.r * overlayScale;
+          ctx.beginPath();
+          for (let i = 0; i <= 180; i++) {
+            const t = TWO_PI * i / 180;
+            const p = project(fft.n / 2 + Math.cos(t) * radius, fft.n / 2 + Math.sin(t) * radius);
+            if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+          }
+          ctx.stroke();
+        } else if (fft.shape.type === "ellipse") {
+          ctx.beginPath();
+          for (let i = 0; i <= 160; i++) {
+            const t = TWO_PI * i / 160;
+            const x0 = fft.shape.a * overlayScale * Math.cos(t);
+            const y0 = fft.shape.b * overlayScale * Math.sin(t);
+            const x = fft.n / 2 + x0 * Math.cos(fft.shape.theta) - y0 * Math.sin(fft.shape.theta);
+            const y = fft.n / 2 + x0 * Math.sin(fft.shape.theta) + y0 * Math.cos(fft.shape.theta);
+            const p = project(x, y);
+            if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "#8ee000";
+      ctx.lineWidth = (Math.max(1, fft.n / 768) + 2) * zoomScale;
+      for (const p of fft.peaks) {
+        if (p.x < view.xMin || p.x > view.xMax || p.y < view.yMin || p.y > view.yMax) continue;
+        const cp = project(p.x, p.y);
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, Math.max(7, fft.n / 145) * zoomScale, 0, TWO_PI);
+        ctx.stroke();
+      }
+      ctx.restore();
+      updateTiltOutput();
+    }
+
+    function updateOverlayFromPeaks(useDetectConvention = false) {
+      const fft = state.fft;
+      if (!fft || !state.region) return;
+      const peaks = fft.peaks;
+      const cx = fft.n / 2;
+      const cy = fft.n / 2;
+      const resolution = getResolution();
+      fft.shape = null;
+      fft.tilt = null;
+      fft.fitNote = "";
+      if (!peaks.length) {
+        drawFft();
+        return;
+      }
+      if (peaks.length < 3) {
+        const p = peaks[peaks.length - 1];
+        const r = Math.hypot(p.x - cx, p.y - cy);
+        fft.shape = { type: "circle", r };
+        fft.fitNote = "Ellipse fitting starts after 3 peaks.";
+        const apix = r * resolution / fft.n;
+        setApix(apix);
+        drawFft();
+        return;
+      }
+      const fit = fitEllipseFixedCenter(peaks, cx, cy);
+      if (!ellipseFitIsUsable(fit)) {
+        const p = peaks[peaks.length - 1];
+        const r = Math.hypot(p.x - cx, p.y - cy);
+        fft.shape = { type: "circle", r };
+        fft.fitNote = "Ellipse fit could not be solved; showing the latest-peak circle.";
+        const apix = r * resolution / fft.n;
+        if (apix >= 0.01 && apix <= 6) setApix(apix);
+        drawFft();
+        return;
+      }
+      const small = Math.min(fit.a, fit.b);
+      const large = Math.max(fit.a, fit.b);
+      const tilt = calculateTilt(small, large);
+      const apixAxis = useDetectConvention ? small : large;
+      const untiltedApix = apixAxis * resolution / fft.n;
+      fft.shape = { type: "ellipse", a: fit.a, b: fit.b, theta: fit.theta };
+      fft.tilt = { small, large, tilt, untiltedApix, theta: fit.theta };
+      fft.fitNote = "";
+      if (untiltedApix >= 0.01 && untiltedApix <= 6) setApix(untiltedApix);
+      drawFft();
+    }
+
+    function updateTiltOutput() {
+      const fft = state.fft;
+      if (!fft || !fft.peaks.length) {
+        el.tiltOutput.textContent = "No overlay - click to add peaks or use Detect Peaks.";
+        return;
+      }
+      if (fft.tilt) {
+        el.tiltOutput.textContent =
+          `Ellipse fitted:\n` +
+          `Minor axis: ${fft.tilt.small.toFixed(2)} px\n` +
+          `Major axis: ${fft.tilt.large.toFixed(2)} px\n` +
+          `Tilt angle: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg\n` +
+          `Orientation: ${(fft.tilt.theta * 180 / Math.PI).toFixed(1)} deg\n` +
+          `Untilted pixel size: ${fft.tilt.untiltedApix.toFixed(4)} A/px`;
+      } else if (fft.shape && fft.shape.type === "circle") {
+        const apix = fft.shape.r * getResolution() / fft.n;
+        el.tiltOutput.textContent =
+          `Circle from latest peak:\n` +
+          `Peaks: ${fft.peaks.length}\n` +
+          `Radius: ${fft.shape.r.toFixed(2)} px\n` +
+          `Calculated pixel size: ${apix.toFixed(4)} A/px` +
+          (fft.fitNote ? `\n${fft.fitNote}` : "");
+      }
+    }
+
+    function detectPeaks(silent = false) {
+      const fft = state.fft;
+      if (!fft || !state.region) return;
+      const n = fft.n;
+      const resolution = getResolution();
+      const apix = Number(el.apixExact.value) || Number(el.nominalApix.value) || 1;
+      const targetRadius = fft.n * apix / resolution;
+      const band = 10;
+      const cx = n / 2;
+      const cy = n / 2;
+      const candidates = [];
+      const mag = fft.mag;
+      for (let y = 2; y < n - 2; y++) {
+        for (let x = 2; x < n - 2; x++) {
+          const r = Math.hypot(x - cx, y - cy);
+          if (r < targetRadius - band || r > targetRadius + band) continue;
+          const v = mag[y * n + x];
+          let isMax = true;
+          for (let yy = -2; yy <= 2 && isMax; yy++) {
+            for (let xx = -2; xx <= 2; xx++) {
+              if (xx === 0 && yy === 0) continue;
+              if (mag[(y + yy) * n + x + xx] > v) {
+                isMax = false;
+                break;
+              }
+            }
+          }
+          if (isMax) candidates.push({ x, y, v });
+        }
+      }
+      candidates.sort((a, b) => b.v - a.v);
+      if (!candidates.length) {
+        if (!silent) setStatus("No peaks found in the expected resolution band.");
+        return;
+      }
+      const maxV = candidates[0].v;
+      const selected = [];
+      for (const c of candidates) {
+        if (selected.length >= 20) break;
+        if (selected.length >= 6 && c.v < maxV * 0.5) break;
+        if (!selected.some((p) => Math.hypot(p.x - c.x, p.y - c.y) < Math.max(8, n / 128))) selected.push(c);
+      }
+      fft.peaks = selected.slice(0, Math.max(6, Math.min(20, selected.length))).map((p) => ({ x: p.x, y: p.y }));
+      updateOverlayFromPeaks(true);
+      if (!silent) setStatus(`Detected ${fft.peaks.length} FFT peaks near radius ${targetRadius.toFixed(1)} px.`);
+    }
+
+    function clearOverlay() {
+      if (!state.fft) return;
+      state.fft.peaks = [];
+      state.fft.shape = null;
+      state.fft.tilt = null;
+      state.fft.fitNote = "";
+      drawFft();
+    }
+
+    function strongestFftPixelInWindow(point, windowSize = 5) {
+      const fft = state.fft;
+      if (!fft) return point;
+      const half = Math.floor(windowSize / 2);
+      const cx = clamp(Math.round(point.x), 0, fft.n - 1);
+      const cy = clamp(Math.round(point.y), 0, fft.n - 1);
+      let best = { x: cx, y: cy };
+      let bestValue = -Infinity;
+      for (let y = Math.max(0, cy - half); y <= Math.min(fft.n - 1, cy + half); y++) {
+        for (let x = Math.max(0, cx - half); x <= Math.min(fft.n - 1, cx + half); x++) {
+          const value = fft.mag[y * fft.n + x];
+          if (value > bestValue) {
+            bestValue = value;
+            best = { x, y };
+          }
+        }
+      }
+      return best;
+    }
+
+    function correctedFftPeakPoint(point) {
+      const p = { x: clamp(point.x, 0, state.fft.n - 1), y: clamp(point.y, 0, state.fft.n - 1) };
+      return autocorrectEnabled() ? strongestFftPixelInWindow(p, 5) : p;
+    }
+
+    function drawPowerPlaceholder() {
+      state.powerPlot = null;
+      emptyPlot(el.powerPlot, "Radial Profile", "Radial profile will appear after FFT calculation.");
+    }
+
+    function drawHeatmapPlaceholder(text) {
+      state.heatmapPlot = null;
+      emptyPlot(el.heatmapPlot, "Focused Heatmap", text);
+    }
+
+    function findBestPowerPeak() {
+      const n = state.nufft;
+      if (!n) return null;
+      const y = curveYData();
+      let bestIdx = -1;
+      let bestVal = -Infinity;
+      for (let i = 1; i < y.length - 1; i++) {
+        if (y[i] >= y[i - 1] && y[i] >= y[i + 1] && y[i] > bestVal) {
+          bestVal = y[i];
+          bestIdx = i;
+        }
+      }
+      if (bestIdx < 0) {
+        for (let i = 0; i < y.length; i++) if (y[i] > bestVal) { bestVal = y[i]; bestIdx = i; }
+      }
+      return bestIdx >= 0 ? { idx: bestIdx, freq: n.freqs[bestIdx], y: bestVal } : null;
+    }
+
+    function curveYData() {
+      const src = state.nufft ? state.nufft.pwrCurve : [];
+      if (!el.nufftLogY.checked) return src;
+      const out = new Float32Array(src.length);
+      for (let i = 0; i < src.length; i++) out[i] = Math.log1p(Math.abs(src[i]));
+      return out;
+    }
+
+    function autocorrectEnabled() {
+      return !!(el.autoCorrect && el.autoCorrect.checked);
+    }
+
+    function nearestLocalPowerMaximumIndex(startIdx) {
+      const n = state.nufft;
+      if (!n) return startIdx;
+      const y = curveYData();
+      if (!y.length) return startIdx;
+      const idx = clamp(Math.round(startIdx), 0, y.length - 1);
+      const maxima = [];
+      for (let i = 1; i < y.length - 1; i++) {
+        if (y[i] >= y[i - 1] && y[i] >= y[i + 1]) maxima.push(i);
+      }
+      if (!maxima.length) return idx;
+      let best = maxima[0];
+      let bestDist = Math.abs(best - idx);
+      for (const candidate of maxima) {
+        const dist = Math.abs(candidate - idx);
+        if (dist < bestDist || (dist === bestDist && y[candidate] > y[best])) {
+          best = candidate;
+          bestDist = dist;
+        }
+      }
+      return best;
+    }
+
+    function correctedPowerIndex(rawIdx) {
+      return autocorrectEnabled() ? nearestLocalPowerMaximumIndex(rawIdx) : rawIdx;
+    }
+
+    function renderPowerCurve(markerFreq = null) {
+      const n = state.nufft;
+      if (!n) {
+        drawPowerPlaceholder();
+        return;
+      }
+      ensurePlotly();
+      const y = curveYData();
+      const fullXMin = Math.min(...n.freqs);
+      const fullXMax = Math.max(...n.freqs);
+      let fullYMin = Math.min(...y);
+      let fullYMax = Math.max(...y);
+      if (fullYMax <= fullYMin) fullYMax = fullYMin + 1;
+      const yPad = Math.max(1e-6, (fullYMax - fullYMin) * 0.08);
+      const yBounds = [fullYMin - yPad, fullYMax + yPad];
+      const marker = markerFreq || n.clickedFreq;
+      const traces = [{
+        type: "scatter",
+        mode: "lines",
+        x: Array.from(n.freqs),
+        y: Array.from(y),
+        line: { color: PLOT_LINE, width: 2.4 },
+        hovertemplate: "Frequency: %{x:.6f} 1/A<br>Intensity: %{y:.4f}<extra></extra>"
+      }];
+      const shapes = marker ? [{
+        type: "line",
+        x0: marker,
+        x1: marker,
+        y0: fullYMin,
+        y1: fullYMax,
+        line: { color: "#00a6a6", width: 2 }
+      }] : [];
+      const layout = plotlyLayout(
+        `Radial Profile: +/-${Number(el.nufftDisplayRange.value).toFixed(1)}% around ${n.targetResolution.toFixed(3)} A`,
+        "Spatial Resolution (1/A)",
+        el.nufftLogY.checked ? "Log(Intensity)" : "Intensity",
+        {
+          titleFontSize: 15,
+          uirevision: `power-${n.revision}-${el.nufftLogY.checked ? "log" : "linear"}`,
+          shapes,
+          xaxis: {
+            ...plotlyLayout("", "", "").xaxis,
+            visible: true,
+            title: { text: "Spatial Resolution (1/A)" },
+            range: [fullXMin, fullXMax]
+          },
+          yaxis: {
+            ...plotlyLayout("", "", "").yaxis,
+            visible: true,
+            title: { text: el.nufftLogY.checked ? "Log(Intensity)" : "Intensity" },
+            autorange: true
+          }
+        }
+      );
+      const renderResult = Plotly.react(el.powerPlot, traces, layout, PLOTLY_CONFIG);
+      repaintPlotlyAfterRender(el.powerPlot, renderResult);
+      state.powerPlot = { fullXMin, fullXMax, fullYMin: yBounds[0], fullYMax: yBounds[1] };
+      if (!state.plotlyBound.power) {
+        el.powerPlot.on("plotly_click", (event) => {
+          const point = event.points && event.points[0];
+          if (!point || !state.nufft) return;
+          const rawIdx = nearestIndex(state.nufft.freqs, point.x);
+          const idx = correctedPowerIndex(rawIdx);
+          const clickedFreq = state.nufft.freqs[idx];
+          state.nufft.clickedFreq = clickedFreq;
+          const apix = state.nufft.nominalApix * (clickedFreq / (1 / state.nufft.targetResolution));
+          setApix(apix);
+          renderPowerCurve(clickedFreq);
+          renderHeatmap(clickedFreq);
+        });
+        el.powerPlot.on("plotly_relayout", () => {
+          if (!state.powerPlot) return;
+          clampPlotlyView("power", el.powerPlot, {
+            x: [state.powerPlot.fullXMin, state.powerPlot.fullXMax],
+            y: [state.powerPlot.fullYMin, state.powerPlot.fullYMax]
+          });
+        });
+        state.plotlyBound.power = true;
+      }
+    }
+
+    function renderHeatmap(freq) {
+      const n = state.nufft;
+      if (!n || !freq) {
+        drawHeatmapPlaceholder("Click the power curve to generate a focused heatmap.");
+        return;
+      }
+      ensurePlotly();
+      const idx = nearestIndex(n.freqs, freq);
+      const span = 10;
+      const start = Math.max(0, idx - span);
+      const end = Math.min(n.rSamples, idx + span + 1);
+      const rows = end - start;
+      const cols = n.thetaSamples;
+      const x = Array.from({ length: cols }, (_, i) => i / cols * 360);
+      const y = Array.from({ length: rows }, (_, r) => n.freqs[start + r]);
+      const yMin = Math.min(...y);
+      const yMax = Math.max(...y);
+      const z = [];
+      for (let r = 0; r < rows; r++) {
+        const row = [];
+        for (let t = 0; t < cols; t++) {
+          let v = n.pwr2d[t * n.rSamples + start + r];
+          if (el.nufftLogY.checked) v = Math.log1p(Math.abs(v));
+          row.push(v);
+        }
+        z.push(row);
+      }
+      const traces = [{
+        type: "heatmap",
+        x,
+        y,
+        z,
+        colorscale: "Viridis",
+        zsmooth: false,
+        colorbar: { title: el.nufftLogY.checked ? "Log intensity" : "Intensity" },
+        hovertemplate: "Angle: %{x:.1f} deg<br>Frequency: %{y:.6f} 1/A<br>Intensity: %{z:.4f}<extra></extra>"
+      }];
+      const layout = plotlyLayout(
+        `Focused Heatmap: +/-10 radial samples around ${freq.toFixed(6)} 1/A`,
+        "Angular Samples",
+        "Spatial Resolution (1/A)",
+        {
+          titleFontSize: 15,
+          uirevision: `heatmap-${n.revision}-${el.nufftLogY.checked ? "log" : "linear"}`,
+          margin: { l: 72, r: 70, t: 56, b: 58 },
+          xaxis: {
+            ...plotlyLayout("", "", "").xaxis,
+            visible: true,
+            title: { text: "Angular Samples" },
+            range: [0, 360]
+          },
+          yaxis: {
+            ...plotlyLayout("", "", "").yaxis,
+            visible: true,
+            title: { text: "Spatial Resolution (1/A)" },
+            autorange: true
+          }
+        }
+      );
+      const renderResult = Plotly.react(el.heatmapPlot, traces, layout, PLOTLY_CONFIG);
+      repaintPlotlyAfterRender(el.heatmapPlot, renderResult);
+      state.heatmapPlot = { rows, cols, start, end, freq, xMin: 0, xMax: 360, yMin, yMax };
+      if (!state.plotlyBound.heatmap) {
+        el.heatmapPlot.on("plotly_click", (event) => {
+          const point = event.points && event.points[0];
+          if (!point || !state.nufft) return;
+          const idx = nearestIndex(state.nufft.freqs, point.y);
+          const clickedFreq = state.nufft.freqs[idx];
+          const apix = state.nufft.nominalApix * (clickedFreq / (1 / state.nufft.targetResolution));
+          setApix(apix);
+        });
+        el.heatmapPlot.on("plotly_relayout", () => {
+          if (!state.heatmapPlot) return;
+          clampPlotlyView("heatmap", el.heatmapPlot, {
+            x: [state.heatmapPlot.xMin, state.heatmapPlot.xMax],
+            y: [state.heatmapPlot.yMin, state.heatmapPlot.yMax]
+          });
+        });
+        state.plotlyBound.heatmap = true;
+      }
+    }
+
+    function nearestIndex(array, value) {
+      let best = 0;
+      let dBest = Infinity;
+      for (let i = 0; i < array.length; i++) {
+        const d = Math.abs(array[i] - value);
+        if (d < dBest) {
+          dBest = d;
+          best = i;
+        }
+      }
+      return best;
+    }
+
+    function hoverImage(event) {
+      const img = state.image;
+      if (!img) {
+        hideHover();
+        return;
+      }
+      const p = canvasPoint(el.imageCanvas, event);
+      const x = clamp(Math.floor(p.x), 0, img.displayWidth - 1);
+      const y = clamp(Math.floor(p.y), 0, img.displayHeight - 1);
+      const ox = clamp(Math.floor(x * img.scaleX), 0, img.width - 1);
+      const oy = clamp(Math.floor(y * img.scaleY), 0, img.height - 1);
+      const raw = img.data[oy * img.width + ox];
+      const shown = img.display8[y * img.displayWidth + x];
+      const s = normalizedSelection();
+      const selW = Math.abs(s.x1 - s.x0) * img.scaleX;
+      const selH = Math.abs(s.y1 - s.y0) * img.scaleY;
+      showCrosshair(el.imageCanvas, event);
+      showHoverTip(event, [
+        "Image",
+        `Display: x ${x}, y ${y}`,
+        `Original: x ${ox}, y ${oy}`,
+        `Intensity: ${fmt(raw, 4)}  |  Display: ${shown}`,
+        `Selection: ${fmt(selW, 0)} x ${fmt(selH, 0)} px`,
+        state.drag ? "Release to calculate FFT" : "Drag to select a region"
+      ]);
+    }
+
+    function hoverFft(event) {
+      const fft = state.fft;
+      if (!fft) {
+        hideHover();
+        return;
+      }
+      const p = fftCanvasToData(canvasPoint(el.fftCanvas, event), fft);
+      const x = clamp(Math.floor(p.x), 0, fft.n - 1);
+      const y = clamp(Math.floor(p.y), 0, fft.n - 1);
+      const dx = x - fft.n / 2;
+      const dy = y - fft.n / 2;
+      const radius = Math.hypot(dx, dy);
+      const mag = fft.mag[y * fft.n + x];
+      const shown = fft.display[y * fft.n + x];
+      const apix = radius > 0 ? radius * getResolution() / fft.n : 0;
+      showCrosshair(el.fftCanvas, event);
+      showHoverTip(event, [
+        "2D Spectrum",
+        `x ${x}, y ${y}  |  dx ${fmt(dx, 1)}, dy ${fmt(dy, 1)}`,
+        `Radius: ${fmt(radius, 2)} px`,
+        `Magnitude: ${fmt(mag, 4)}  |  Display: ${shown}`,
+        `Pixel size at radius: ${fmt(apix, 4)} A/px`,
+        "Drag a box to zoom, Shift-drag to pan, click to add/remove peak"
+      ]);
+    }
+
+    function redrawInteractivePlots() {
+      resizePlotlyPlots();
+      renderPowerCurve(state.nufft && state.nufft.clickedFreq);
+      renderHeatmap(state.nufft && state.nufft.clickedFreq);
+      drawStatsPlot();
+    }
+
+    function queuePlotResize() {
+      if (state.resizeFrame) return;
+      state.resizeFrame = requestAnimationFrame(() => {
+        state.resizeFrame = null;
+        redrawInteractivePlots();
+      });
+    }
+
+    function setupResponsiveCanvases() {
+      if (window.ResizeObserver) {
+        const observer = new ResizeObserver(queuePlotResize);
+        observer.observe(el.powerPlot);
+        observer.observe(el.heatmapPlot);
+        observer.observe(el.statsPlot);
+      }
+      window.addEventListener("resize", queuePlotResize);
+    }
+
+    function renderPlotKind(kind) {
+      if (kind === "fft") drawFft();
+    }
+
+    function resetPlotView(kind) {
+      if (kind !== "fft") return;
+      state.plotViews.fft = null;
+      drawFft();
+      setStatus("2D spectrum view reset.");
+    }
+
+    function zoomPlot(kind, factor, event = null) {
+      if (kind !== "fft") return;
+      const fft = state.fft;
+      if (!fft) return;
+      const view = fftView(fft);
+      const p = event ? fftCanvasToData(canvasPoint(el.fftCanvas, event), fft) : null;
+      const cx = p ? p.x : (view.xMin + view.xMax) / 2;
+      const cy = p ? p.y : (view.yMin + view.yMax) / 2;
+      const [xMin, xMax] = rangeZoom(view.xMin, view.xMax, cx, factor, 0, fft.n);
+      const [yMin, yMax] = rangeZoom(view.yMin, view.yMax, cy, factor, 0, fft.n);
+      state.plotViews.fft = { xMin, xMax, yMin, yMax };
+      drawFft();
+    }
+
+    function panPlot(kind, dx, dy) {
+      if (kind !== "fft") return;
+      const fft = state.fft;
+      if (!fft) return;
+      const view = fftView(fft);
+      const xDelta = -dx / el.fftCanvas.width * (view.xMax - view.xMin);
+      const yDelta = -dy / el.fftCanvas.height * (view.yMax - view.yMin);
+      const [xMin, xMax] = rangePan(view.xMin, view.xMax, xDelta, 0, fft.n);
+      const [yMin, yMax] = rangePan(view.yMin, view.yMax, yDelta, 0, fft.n);
+      state.plotViews.fft = { xMin, xMax, yMin, yMax };
+      drawFft();
+    }
+
+    function plotCanvas(kind) {
+      return kind === "fft" ? el.fftCanvas : null;
+    }
+
+    function boxZoomPlot(kind, start, end) {
+      if (kind !== "fft") return false;
+      const left = Math.min(start.x, end.x);
+      const right = Math.max(start.x, end.x);
+      const top = Math.min(start.y, end.y);
+      const bottom = Math.max(start.y, end.y);
+      if (right - left < 10 || bottom - top < 10) return false;
+      const fft = state.fft;
+      if (!fft) return false;
+      const p0 = fftCanvasToData({ x: left, y: top }, fft);
+      const p1 = fftCanvasToData({ x: right, y: bottom }, fft);
+      if (Math.abs(p1.x - p0.x) < 4 || Math.abs(p1.y - p0.y) < 4) return false;
+      state.plotViews.fft = {
+        xMin: Math.min(p0.x, p1.x),
+        xMax: Math.max(p0.x, p1.x),
+        yMin: Math.min(p0.y, p1.y),
+        yMax: Math.max(p0.y, p1.y)
+      };
+      drawFft();
+      setStatus("2D spectrum zoomed to selected box.");
+      return true;
+    }
+
+    function setupPlotInteractions() {
+      document.querySelectorAll(".plot-tool").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const kind = btn.dataset.plot;
+          const action = btn.dataset.action;
+          if (action === "zoom-in") zoomPlot(kind, 0.65);
+          else if (action === "zoom-out") zoomPlot(kind, 1.55);
+          else resetPlotView(kind);
+        });
+      });
+      ["fft"].forEach((kind) => {
+        const canvas = plotCanvas(kind);
+        canvas.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          zoomPlot(kind, event.deltaY < 0 ? 0.82 : 1.22, event);
+        }, { passive: false });
+        canvas.addEventListener("dblclick", () => resetPlotView(kind));
+        canvas.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          const p = canvasPoint(canvas, event);
+          state.plotDrag = { kind, pointerId: event.pointerId, start: p, last: p, moved: false, mode: event.shiftKey ? "pan" : "box" };
+          canvas.setPointerCapture(event.pointerId);
+        });
+        canvas.addEventListener("pointermove", (event) => {
+          const drag = state.plotDrag;
+          if (!drag || drag.kind !== kind || drag.pointerId !== event.pointerId) return;
+          const p = canvasPoint(canvas, event);
+          const dx = p.x - drag.last.x;
+          const dy = p.y - drag.last.y;
+          if (Math.hypot(p.x - drag.start.x, p.y - drag.start.y) > 3) drag.moved = true;
+          if (drag.mode === "pan" && Math.hypot(dx, dy) > 1.5) {
+            drag.moved = true;
+            panPlot(kind, dx, dy);
+            drag.last = p;
+          } else if (drag.mode === "box" && drag.moved) {
+            showZoomBox(canvas, drag.start, p);
+          }
+        });
+        const endDrag = (event) => {
+          const drag = state.plotDrag;
+          if (!drag || drag.kind !== kind || drag.pointerId !== event.pointerId) return;
+          if (drag.moved) {
+            if (drag.mode === "box") boxZoomPlot(kind, drag.start, canvasPoint(canvas, event));
+            state.suppressPlotClickUntil = performance.now() + 250;
+          }
+          hideZoomBox();
+          state.plotDrag = null;
+          try { canvas.releasePointerCapture(event.pointerId); } catch (_) {}
+        };
+        canvas.addEventListener("pointerup", endDrag);
+        canvas.addEventListener("pointercancel", endDrag);
+      });
+    }
+
+    function setupLayoutSplitter() {
+      const splitter = el.layoutSplitter;
+      if (!splitter) return;
+      splitter.addEventListener("pointerdown", (event) => {
+        if (window.matchMedia("(max-width: 1100px)").matches) return;
+        splitter.setPointerCapture(event.pointerId);
+        document.body.style.cursor = "col-resize";
+        const onMove = (moveEvent) => {
+          const layoutRect = document.querySelector(".layout").getBoundingClientRect();
+          const gapAndSplitter = 18;
+          const minLeft = 300;
+          const minRight = 420;
+          const left = clamp(moveEvent.clientX - layoutRect.left, minLeft, layoutRect.width - minRight - gapAndSplitter);
+          document.documentElement.style.setProperty("--image-col", `${Math.round(left)}px`);
+          queuePlotResize();
+        };
+        const onUp = (upEvent) => {
+          document.body.style.cursor = "";
+          try { splitter.releasePointerCapture(upEvent.pointerId); } catch (_) {}
+          splitter.removeEventListener("pointermove", onMove);
+          splitter.removeEventListener("pointerup", onUp);
+          splitter.removeEventListener("pointercancel", onUp);
+        };
+        splitter.addEventListener("pointermove", onMove);
+        splitter.addEventListener("pointerup", onUp);
+        splitter.addEventListener("pointercancel", onUp);
+      });
+    }
+
+    function setupWorkspaceSplitter() {
+      const splitter = el.workspaceSplitter;
+      const layout = document.querySelector(".layout");
+      if (!splitter || !layout) return;
+      splitter.addEventListener("pointerdown", (event) => {
+        if (window.matchMedia("(max-width: 1100px)").matches) return;
+        splitter.setPointerCapture(event.pointerId);
+        document.body.style.cursor = "row-resize";
+        state.workspaceManuallySized = true;
+        const startY = event.clientY;
+        const startHeight = layout.getBoundingClientRect().height;
+        const { minHeight, maxHeight } = workspaceHeightBounds();
+        const onMove = (moveEvent) => {
+          const next = clamp(startHeight + moveEvent.clientY - startY, minHeight, maxHeight);
+          applyWorkspaceHeight(next);
+          queuePlotResize();
+        };
+        const onUp = (upEvent) => {
+          document.body.style.cursor = "";
+          try { splitter.releasePointerCapture(upEvent.pointerId); } catch (_) {}
+          splitter.removeEventListener("pointermove", onMove);
+          splitter.removeEventListener("pointerup", onUp);
+          splitter.removeEventListener("pointercancel", onUp);
+        };
+        splitter.addEventListener("pointermove", onMove);
+        splitter.addEventListener("pointerup", onUp);
+        splitter.addEventListener("pointercancel", onUp);
+      });
+      window.addEventListener("resize", () => {
+        if (!state.workspaceManuallySized) fitWorkspaceToViewport();
+      });
+    }
+
+    function setupStatsSplitter() {
+      const splitter = el.statsSplitter;
+      const stats = document.querySelector(".stats");
+      if (!splitter || !stats) return;
+      splitter.addEventListener("pointerdown", (event) => {
+        if (window.matchMedia("(max-width: 860px)").matches) return;
+        splitter.setPointerCapture(event.pointerId);
+        document.body.style.cursor = "col-resize";
+        const onMove = (moveEvent) => {
+          const rect = stats.getBoundingClientRect();
+          const styles = getComputedStyle(stats);
+          const gap = Number.parseFloat(styles.columnGap) || 0;
+          const splitterWidth = splitter.getBoundingClientRect().width || 10;
+          const available = Math.max(0, rect.width - splitterWidth - gap * 2);
+          const minLeft = Math.min(420, available * 0.58);
+          const minRight = Math.min(360, available * 0.48);
+          const maxLeft = Math.max(minLeft, available - minRight);
+          const left = clamp(moveEvent.clientX - rect.left, minLeft, maxLeft);
+          document.documentElement.style.setProperty("--stats-table-col", `${Math.round(left)}px`);
+          queuePlotResize();
+        };
+        const onUp = (upEvent) => {
+          document.body.style.cursor = "";
+          try { splitter.releasePointerCapture(upEvent.pointerId); } catch (_) {}
+          splitter.removeEventListener("pointermove", onMove);
+          splitter.removeEventListener("pointerup", onUp);
+          splitter.removeEventListener("pointercancel", onUp);
+        };
+        splitter.addEventListener("pointermove", onMove);
+        splitter.addEventListener("pointerup", onUp);
+        splitter.addEventListener("pointercancel", onUp);
+      });
+    }
+
+    function workspaceHeightBounds() {
+      const minHeight = Math.min(660, Math.max(560, window.innerHeight - 160));
+      const maxHeight = Math.max(minHeight, window.innerHeight * 1.35);
+      return { minHeight, maxHeight };
+    }
+
+    function applyWorkspaceHeight(height) {
+      const { minHeight, maxHeight } = workspaceHeightBounds();
+      const next = clamp(height, minHeight, maxHeight);
+      const plotHeight = clamp(Math.round((next - 248) / 2), 190, 430);
+      document.documentElement.style.setProperty("--workspace-height", `${Math.round(next)}px`);
+      document.documentElement.style.setProperty("--workspace-content-height", `${Math.round(next - 28)}px`);
+      document.documentElement.style.setProperty("--workspace-min-height", `${minHeight}px`);
+      document.documentElement.style.setProperty("--plot-height", `${plotHeight}px`);
+    }
+
+    function fitWorkspaceToViewport() {
+      const layout = document.querySelector(".layout");
+      if (!layout || window.matchMedia("(max-width: 1100px)").matches) {
+        document.documentElement.style.removeProperty("--workspace-height");
+        document.documentElement.style.removeProperty("--workspace-content-height");
+        document.documentElement.style.removeProperty("--workspace-min-height");
+        document.documentElement.style.removeProperty("--plot-height");
+        return;
+      }
+      const top = layout.getBoundingClientRect().top;
+      const desired = window.innerHeight - top - 30;
+      applyWorkspaceHeight(desired);
+      queuePlotResize();
+    }
+
+    function setupCardExpansion() {
+      document.querySelectorAll(".card").forEach((card) => {
+        const title = card.querySelector(":scope > h2");
+        if (!title || title.querySelector(".card-expand")) return;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "card-expand";
+        btn.textContent = "Max";
+        btn.setAttribute("aria-label", "Expand card");
+        btn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const expanded = card.classList.toggle("expanded");
+          document.querySelectorAll(".card.expanded").forEach((other) => {
+            if (other !== card) {
+              other.classList.remove("expanded");
+              const otherBtn = other.querySelector(".card-expand");
+              if (otherBtn) {
+                otherBtn.textContent = "Max";
+                otherBtn.setAttribute("aria-label", "Expand card");
+              }
+            }
+          });
+          document.body.classList.toggle("has-expanded-card", expanded);
+          btn.textContent = expanded ? "Exit" : "Max";
+          btn.setAttribute("aria-label", expanded ? "Exit expanded card" : "Expand card");
+          queuePlotResize();
+        });
+        title.appendChild(btn);
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        document.querySelectorAll(".card.expanded").forEach((card) => {
+          card.classList.remove("expanded");
+          const btn = card.querySelector(".card-expand");
+          if (btn) {
+            btn.textContent = "Max";
+            btn.setAttribute("aria-label", "Expand card");
+          }
+        });
+        document.body.classList.remove("has-expanded-card");
+        queuePlotResize();
+      });
+    }
+
+    function setupComponentTips() {
+      const tips = [
+        ["#methodUrlLabel", "URL Input", "Paste a direct image link. The app loads it automatically after the URL is complete."],
+        ["#methodUploadLabel", "Upload Input", "Use local image files when the data is already on this computer."],
+        ["#downloadUrlLabel", "Download URL", "Paste a TIFF, MRC, PNG, or JPEG URL. Loading and decoding happen locally in your browser."],
+        ["#downloadUrl", "Download URL", "Paste a TIFF, MRC, PNG, or JPEG URL. The app starts loading automatically after a short pause."],
+        ["#fileInputLabel", "Upload Images", "Browse for local image files. The table estimates nominal pixel size from filenames when possible."],
+        [".browse-button", "Browse", "Choose one or more local TIFF, MRC, PNG, or JPEG files."],
+        ["#autoSample", "Autosample", "When enabled, each uploaded image is split into sampled regions and automatically added to the statistics table."],
+        ["#autoSampleN", "Autosample Regions", "Number of regions to sample per uploaded image. The 100% region size uses one full-image region."],
+        ["#autoSampleSize", "Autosample Region Size", "Fraction of the image area covered by each automatically sampled region."],
+        ["#autoSampleStartBtn", "Start Autosampling", "Run autosampling for the uploaded files using the current region count and size settings."],
+        ["input[name=method]", "Input Method", "Switch between loading a remote URL and local files."],
+        ["#nominalApix", "Nominal (A/px)", "Starting pixel size in A/px, often parsed from the filename."],
+        ["#resolutionType", "Specimen", "Select the reference lattice spacing used to convert FFT radius into pixel size."],
+        ["#customResolution", "Custom Resolution", "Use a custom reference spacing in Angstroms."],
+        ["button[data-tab=nufftPanel]", "1D Radial Profile", "Peak picking here updates the calibrated pixel size."],
+        ["button[data-tab=spectrumPanel]", "2D Spectrum", "Inspect FFT peaks and fit circular or elliptical overlays."],
+        ["#nufftLogY", "Log Scale", "Toggle logarithmic intensity for the radial profile and heatmap."],
+        [".autocorrect-toggle", "Autocorrect", "Snap radial clicks to the nearest local maximum and 2D clicks to the brightest nearby FFT pixel."],
+        ["#nufftRSampling", "Radial Sampling", "Higher values sample the radial curve more densely."],
+        ["#nufftThetaSampling", "Angular Sampling", "Higher values sample more angles around the FFT ring."],
+        ["#nufftDisplayRange", "Display Range", "Controls the frequency window around the chosen reference resolution."],
+        ["#contrast", "FFT Contrast", "Adjust display contrast for the 2D spectrum without changing the calculation."],
+        ["#detectPeaksBtn", "Detect Peaks", "Find candidate FFT peaks near the current pixel-size radius."],
+        ["#clearOverlayBtn", "Clear Overlay", "Remove manually added or detected FFT peaks."],
+        ["#apixSlider", "Pixel Size", "Fine-tune the current calibrated pixel size."],
+        ["#apixExact", "Exact Pixel Size", "Type an exact A/px value to set the result directly."],
+        ["#apixSetBtn", "Set Pixel Size", "Apply the exact value in the input field."],
+        ["#addToTableBtn", "Add Result", "Store the current file, region, and pixel-size result in the statistics table."],
+        ["#deleteSelectedBtn", "Delete Selected", "Remove the selected statistics row."],
+        ["#clearTableBtn", "Clear Table", "Remove all accumulated statistics rows."],
+        ["#downloadCsvBtn", "Download Results", "Choose a filename prefix and save the measurements CSV, grouped statistics CSV, and statistics plot PNG."],
+        ["#layoutSplitter", "Resize Panes", "Drag this divider to give more room to the image or analysis pane."],
+        ["#workspaceSplitter", "Resize Workspace", "Drag this divider to give more height to the image/FFT workspace or the statistics area."],
+        [".plot-tool", "Plot Controls", "Use + and - to zoom, Reset to restore. Drag a box to zoom, Shift-drag to pan."],
+        [".card-expand", "Expand Card", "Open this card as a larger focused workspace. Press Escape to close."]
+      ];
+      for (const [selector, title, text] of tips) {
+        document.querySelectorAll(selector).forEach((node) => {
+          node.addEventListener("pointerenter", (event) => showHoverTip(event, [title, text]));
+          node.addEventListener("pointermove", moveHoverTip);
+          node.addEventListener("pointerleave", hideHover);
+          node.addEventListener("pointercancel", hideHover);
+        });
+      }
+      const title = document.getElementById("appTitle");
+      if (title) {
+        const formula = `
+          <div>Known lattice spacing \\(d\\) gives the expected reciprocal-space frequency \\(f_0 = 1/d\\).</div>
+          <div>The radial peak measured from the FFT is \\(f_{peak}\\).</div>
+          <div class="tip-equation">\\(a_{pix} = a_{nominal}\\frac{f_{peak}}{f_0} = a_{nominal}\\,d\\,f_{peak}\\)</div>
+          <div>For a 2D FFT grid of size \\(N\\), a peak radius \\(r\\) gives \\(a_{pix} = r d / N\\).</div>
+        `;
+        title.addEventListener("pointerenter", (event) => showHoverHtmlTip(event, "Pixel Size From Lattice Spacing", formula));
+        title.addEventListener("pointermove", moveHoverTip);
+        title.addEventListener("pointerleave", hideHover);
+        title.addEventListener("pointercancel", hideHover);
+      }
+    }
+
+    function makeRegionPreviewDataUrl() {
+      const img = state.image;
+      const region = state.region;
+      if (!img || !region) return "";
+      const s = region.displaySelection || normalizedSelection();
+      const x0 = clamp(Math.floor(Math.min(s.x0, s.x1)), 0, img.displayWidth - 1);
+      const y0 = clamp(Math.floor(Math.min(s.y0, s.y1)), 0, img.displayHeight - 1);
+      const x1 = clamp(Math.ceil(Math.max(s.x0, s.x1)), x0 + 1, img.displayWidth);
+      const y1 = clamp(Math.ceil(Math.max(s.y0, s.y1)), y0 + 1, img.displayHeight);
+      const sw = x1 - x0;
+      const sh = y1 - y0;
+      const source = document.createElement("canvas");
+      source.width = sw;
+      source.height = sh;
+      const sourceCtx = source.getContext("2d");
+      const imageData = sourceCtx.createImageData(sw, sh);
+      for (let y = 0; y < sh; y++) {
+        const srcStart = (y0 + y) * img.displayWidth + x0;
+        for (let x = 0; x < sw; x++) {
+          const v = img.display8[srcStart + x];
+          const dst = (y * sw + x) * 4;
+          imageData.data[dst] = v;
+          imageData.data[dst + 1] = v;
+          imageData.data[dst + 2] = v;
+          imageData.data[dst + 3] = 255;
+        }
+      }
+      sourceCtx.putImageData(imageData, 0, 0);
+
+      const maxW = 360;
+      const maxH = 280;
+      const scale = Math.min(maxW / sw, maxH / sh);
+      const dw = Math.max(80, Math.round(sw * scale));
+      const dh = Math.max(80, Math.round(sh * scale));
+      const out = document.createElement("canvas");
+      out.width = dw;
+      out.height = dh;
+      const ctx = out.getContext("2d");
+      ctx.imageSmoothingEnabled = scale < 1;
+      ctx.drawImage(source, 0, 0, dw, dh);
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 5]);
+      ctx.strokeRect(1, 1, dw - 2, dh - 2);
+      return out.toDataURL("image/png");
+    }
+
+    function makeOriginalImagePreviewDataUrl() {
+      const img = state.image;
+      if (!img) return "";
+      const sw = img.displayWidth;
+      const sh = img.displayHeight;
+      const source = document.createElement("canvas");
+      source.width = sw;
+      source.height = sh;
+      const sourceCtx = source.getContext("2d");
+      const imageData = sourceCtx.createImageData(sw, sh);
+      for (let i = 0, j = 0; i < img.display8.length; i++, j += 4) {
+        const v = img.display8[i];
+        imageData.data[j] = v;
+        imageData.data[j + 1] = v;
+        imageData.data[j + 2] = v;
+        imageData.data[j + 3] = 255;
+      }
+      sourceCtx.putImageData(imageData, 0, 0);
+
+      const maxW = 440;
+      const maxH = 320;
+      const scale = Math.min(maxW / sw, maxH / sh);
+      const dw = Math.max(120, Math.round(sw * scale));
+      const dh = Math.max(120, Math.round(sh * scale));
+      const out = document.createElement("canvas");
+      out.width = dw;
+      out.height = dh;
+      const ctx = out.getContext("2d");
+      ctx.imageSmoothingEnabled = scale < 1;
+      ctx.drawImage(source, 0, 0, dw, dh);
+      if (state.region) {
+        const s = state.region.displaySelection || normalizedSelection();
+        const x0 = Math.min(s.x0, s.x1) / sw * dw;
+        const y0 = Math.min(s.y0, s.y1) / sh * dh;
+        const w = Math.abs(s.x1 - s.x0) / sw * dw;
+        const h = Math.abs(s.y1 - s.y0) / sh * dh;
+        ctx.strokeStyle = "#2563eb";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([7, 5]);
+        ctx.strokeRect(x0, y0, w, h);
+      }
+      return out.toDataURL("image/png");
+    }
+
+    function peakFrequencyForApix(apix, n = state.nufft) {
+      if (!n || !n.freqs.length) return null;
+      const freq = Number(apix) / (n.nominalApix * n.targetResolution);
+      if (!Number.isFinite(freq)) return n.clickedFreq || null;
+      return clamp(freq, n.freqs[0], n.freqs[n.freqs.length - 1]);
+    }
+
+    function currentPowerViewRanges() {
+      if (!el.powerPlot || !el.powerPlot._fullLayout) return null;
+      const xRange = el.powerPlot._fullLayout.xaxis && el.powerPlot._fullLayout.xaxis.range;
+      const yRange = el.powerPlot._fullLayout.yaxis && el.powerPlot._fullLayout.yaxis.range;
+      return {
+        x: xRange && xRange.every(Number.isFinite) ? xRange.slice() : null,
+        y: yRange && yRange.every(Number.isFinite) ? yRange.slice() : null
+      };
+    }
+
+    function fallbackRadialPreviewDataUrl(apix, markerFreq = null, viewRanges = null) {
+      const n = state.nufft;
+      if (!n) return "";
+      const x = n.freqs;
+      const y = curveYData();
+      if (!x.length || !y.length) return "";
+      const width = 520;
+      const height = 320;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+      const margin = { left: 62, right: 20, top: 34, bottom: 54 };
+      const plotW = width - margin.left - margin.right;
+      const plotH = height - margin.top - margin.bottom;
+      const xMin = viewRanges && viewRanges.x ? viewRanges.x[0] : x[0];
+      const xMax = viewRanges && viewRanges.x ? viewRanges.x[1] : x[x.length - 1];
+      let yMin = Infinity;
+      let yMax = -Infinity;
+      for (let i = 0; i < y.length; i++) {
+        yMin = Math.min(yMin, y[i]);
+        yMax = Math.max(yMax, y[i]);
+      }
+      if (yMax <= yMin) yMax = yMin + 1;
+      if (viewRanges && viewRanges.y) {
+        yMin = viewRanges.y[0];
+        yMax = viewRanges.y[1];
+      } else {
+        const yPad = (yMax - yMin) * 0.08;
+        yMin -= yPad;
+        yMax += yPad;
+      }
+      const px = (v) => margin.left + (v - xMin) / (xMax - xMin) * plotW;
+      const py = (v) => margin.top + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = PLOT_BG;
+      ctx.fillRect(margin.left, margin.top, plotW, plotH);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i++) {
+        const gx = margin.left + plotW * i / 5;
+        ctx.beginPath();
+        ctx.moveTo(gx, margin.top);
+        ctx.lineTo(gx, margin.top + plotH);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= 4; i++) {
+        const gy = margin.top + plotH * i / 4;
+        ctx.beginPath();
+        ctx.moveTo(margin.left, gy);
+        ctx.lineTo(margin.left + plotW, gy);
+        ctx.stroke();
+      }
+      ctx.save();
+      ctx.rect(margin.left, margin.top, plotW, plotH);
+      ctx.clip();
+      ctx.strokeStyle = PLOT_LINE;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (let i = 0; i < x.length; i++) {
+        const xx = px(x[i]);
+        const yy = py(y[i]);
+        if (i === 0) ctx.moveTo(xx, yy);
+        else ctx.lineTo(xx, yy);
+      }
+      ctx.stroke();
+      const marker = markerFreq ?? n.clickedFreq ?? peakFrequencyForApix(apix, n);
+      if (marker != null) {
+        const mx = px(marker);
+        ctx.strokeStyle = "#00a6a6";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(mx, margin.top);
+        ctx.lineTo(mx, margin.top + plotH);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.strokeStyle = "#cdd6e3";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(margin.left, margin.top, plotW, plotH);
+      ctx.fillStyle = PLOT_TEXT;
+      ctx.font = "600 16px Inter, system-ui, sans-serif";
+      ctx.fillText("1D Radial Profile", margin.left, 22);
+      ctx.font = "12px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Spatial Resolution (1/A)", margin.left + plotW / 2, height - 16);
+      ctx.save();
+      ctx.translate(18, margin.top + plotH / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(el.nufftLogY.checked ? "Log(Intensity)" : "Intensity", 0, 0);
+      ctx.restore();
+      return canvas.toDataURL("image/png");
+    }
+
+    async function makeRadialPreviewDataUrl(apix, markerFreq = null) {
+      const n = state.nufft;
+      const viewRanges = currentPowerViewRanges();
+      if (!n || !n.freqs.length || !window.Plotly) return fallbackRadialPreviewDataUrl(apix, markerFreq, viewRanges);
+      const y = Array.from(curveYData());
+      const x = Array.from(n.freqs);
+      const marker = markerFreq ?? n.clickedFreq ?? peakFrequencyForApix(apix, n);
+      let fullYMin = Math.min(...y);
+      let fullYMax = Math.max(...y);
+      if (fullYMax <= fullYMin) fullYMax = fullYMin + 1;
+      const scratch = document.createElement("div");
+      scratch.style.cssText = "position:fixed;left:-10000px;top:-10000px;width:520px;height:320px;pointer-events:none;";
+      document.body.appendChild(scratch);
+      try {
+        const yShapeRange = viewRanges && viewRanges.y ? viewRanges.y : [fullYMin, fullYMax];
+        const shapes = marker == null ? [] : [{
+          type: "line",
+          x0: marker,
+          x1: marker,
+          y0: yShapeRange[0],
+          y1: yShapeRange[1],
+          line: { color: "#00a6a6", width: 2 }
+        }];
+        const layout = plotlyLayout(
+          "1D Radial Profile Peak",
+          "Spatial Resolution (1/A)",
+          el.nufftLogY.checked ? "Log(Intensity)" : "Intensity",
+          {
+            width: 520,
+            height: 320,
+            margin: { l: 62, r: 20, t: 50, b: 56 },
+            shapes,
+            xaxis: {
+              ...plotlyLayout("", "", "").xaxis,
+              title: { text: "Spatial Resolution (1/A)" },
+              range: viewRanges && viewRanges.x ? viewRanges.x : [x[0], x[x.length - 1]]
+            },
+            yaxis: {
+              ...plotlyLayout("", "", "").yaxis,
+              title: { text: el.nufftLogY.checked ? "Log(Intensity)" : "Intensity" },
+              ...(viewRanges && viewRanges.y ? { range: viewRanges.y } : { autorange: true })
+            }
+          }
+        );
+        await Plotly.newPlot(scratch, [{
+          type: "scatter",
+          mode: "lines",
+          x,
+          y,
+          line: { color: PLOT_LINE, width: 2.4 }
+        }], layout, { displayModeBar: false, staticPlot: true, responsive: false });
+        return await Plotly.toImage(scratch, { format: "png", width: 520, height: 320, scale: 1 });
+      } catch (err) {
+        console.warn("Plotly radial preview failed; using canvas fallback.", err);
+        return fallbackRadialPreviewDataUrl(apix, markerFreq, viewRanges);
+      } finally {
+        if (window.Plotly) Plotly.purge(scratch);
+        scratch.remove();
+      }
+    }
+
+    function activeAnalysisTab() {
+      const active = document.querySelector(".tabs button.active");
+      return active ? active.dataset.tab : "nufftPanel";
+    }
+
+    function activateAnalysisTab(tabId) {
+      const btn = document.querySelector(`.tabs button[data-tab="${tabId}"]`);
+      const panel = $(tabId);
+      if (!btn || !panel) return;
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p === panel));
+      queuePlotResize();
+    }
+
+    function makeFftPreviewDataUrl() {
+      if (!state.fft) return "";
+      drawFft();
+      const size = 420;
+      const out = document.createElement("canvas");
+      out.width = size;
+      out.height = size;
+      const ctx = out.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, size, size);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(el.fftCanvas, 0, 0, size, size);
+      return out.toDataURL("image/png");
+    }
+
+    function fftPreviewLines(apix) {
+      const fft = state.fft;
+      const lines = [`Pixel size: ${apix.toFixed(4)} A/px`];
+      if (!fft) return lines;
+      lines.push(`Peaks: ${fft.peaks.length}`);
+      if (fft.tilt) {
+        lines.push(`Ellipse: minor ${fmt(fft.tilt.small, 2)} px, major ${fmt(fft.tilt.large, 2)} px`);
+        lines.push(`Tilt: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg`);
+      } else if (fft.shape && fft.shape.type === "circle") {
+        lines.push(`Circle radius: ${fmt(fft.shape.r, 2)} px`);
+      } else {
+        lines.push("Overlay: no fitted circle or ellipse");
+      }
+      return lines;
+    }
+
+    function showTablePreview(event, row, type) {
+      if (type === "image") {
+        showHoverPreview(event, "Original Image", row.imagePreview, [
+          row.filename,
+          row.regionLocation,
+          "Blue outline marks the saved region"
+        ]);
+        return;
+      }
+      if (type === "region") {
+        showHoverPreview(event, "Region Preview", row.regionPreview, [
+          row.regionSize,
+          row.regionLocation,
+          row.filename
+        ]);
+        return;
+      }
+      if (row.measurementPreviewType === "fft") {
+        showHoverPreview(event, "2D FFT Analysis", row.measurementPreview, row.measurementPreviewLines || [
+          `Pixel size: ${row.pixelSize.toFixed(4)} A/px`
+        ]);
+        return;
+      }
+      const peakLine = row.radialPeakFreq == null ? "Peak frequency: n/a" : `Peak frequency: ${fmt(row.radialPeakFreq, 6)} 1/A`;
+      showHoverPreview(event, "1D Radial Peak", row.measurementPreview || row.radialPreview, [
+        `Pixel size: ${row.pixelSize.toFixed(4)} A/px`,
+        peakLine,
+        `Nominal: ${row.nominal.toFixed(4)} A/px`
+      ]);
+    }
+
+    function bindTablePreview(cell, row, type) {
+      cell.classList.add("preview-cell");
+      cell.addEventListener("pointerenter", (event) => showTablePreview(event, row, type));
+      cell.addEventListener("pointermove", moveHoverTip);
+      cell.addEventListener("pointerleave", hideHover);
+      cell.addEventListener("pointercancel", hideHover);
+    }
+
+    async function addTableRow(options = {}) {
+      const {
+        includePreviews = true,
+        includeImagePreview = includePreviews,
+        includeRegionPreview = includePreviews,
+        includeMeasurementPreview = includePreviews,
+        previewMode = null,
+        replaceIndex = null,
+        quiet = false
+      } = options;
+      if (!state.region || !state.image) {
+        setStatus("Calculate FFT before adding a table row.");
+        return;
+      }
+      const apix = Number(el.apixExact.value) || Number(el.apixSlider.value);
+      const nominal = Number(el.nominalApix.value) || 1;
+      const loc = state.region.location;
+      const savedSelection = state.region.displaySelection || normalizedSelection();
+      const useFftPreview = previewMode ? previewMode === "fft" : activeAnalysisTab() === "spectrumPanel";
+      const row = {
+        filename: state.image.filename,
+        sourceKey: state.image.sourceKey || "",
+        selection: { ...savedSelection },
+        regionSize: `${state.region.size}x${state.region.size} px`,
+        regionLocation: `x:${loc.x0}-${loc.x1}, y:${loc.y0}-${loc.y1}`,
+        pixelSize: apix,
+        nominal,
+        average: "",
+        imagePreview: "",
+        regionPreview: "",
+        measurementPreview: "",
+        measurementPreviewType: useFftPreview ? "fft" : "radial",
+        measurementPreviewLines: [],
+        radialPreview: "",
+        radialPeakFreq: state.nufft && state.nufft.clickedFreq != null ? state.nufft.clickedFreq : peakFrequencyForApix(apix),
+        fftPeaks: state.fft ? state.fft.peaks.map((p) => ({ x: p.x, y: p.y })) : [],
+        analysisTab: activeAnalysisTab()
+      };
+      const shouldMakePreviews = includeImagePreview || includeRegionPreview || includeMeasurementPreview;
+      if (shouldMakePreviews) {
+        const wasDisabled = el.addToTableBtn.disabled;
+        el.addToTableBtn.disabled = true;
+        try {
+          if (!quiet) setStatus("Preparing table preview thumbnails...");
+          if (includeImagePreview) row.imagePreview = makeOriginalImagePreviewDataUrl();
+          if (includeRegionPreview) row.regionPreview = makeRegionPreviewDataUrl();
+          if (includeMeasurementPreview) {
+            if (useFftPreview) {
+              row.measurementPreview = makeFftPreviewDataUrl();
+              row.measurementPreviewLines = fftPreviewLines(apix);
+            } else {
+              row.radialPreview = await makeRadialPreviewDataUrl(apix, row.radialPeakFreq);
+              row.measurementPreview = row.radialPreview;
+            }
+          }
+        } finally {
+          el.addToTableBtn.disabled = wasDisabled;
+        }
+      }
+      const canReplace = Number.isInteger(replaceIndex) && replaceIndex >= 0 && replaceIndex < state.tableRows.length;
+      if (canReplace) {
+        state.tableRows[replaceIndex] = row;
+        state.selectedTableRow = replaceIndex;
+        state.editingTableRow = replaceIndex;
+      } else {
+        state.tableRows.push(row);
+        state.editingTableRow = null;
+      }
+      updateAverages();
+      renderTable();
+      drawStatsPlot();
+      updateTableActionButton();
+      if (!quiet) setStatus(canReplace ? `Updated table row ${replaceIndex + 1}.` : "Added current result to the statistics table.");
+      return row;
+    }
+
+    function median(values) {
+      if (!values.length) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    function summarizeValues(values) {
+      const n = values.length;
+      const mean = values.reduce((a, b) => a + b, 0) / Math.max(1, n);
+      const med = median(values);
+      const variance = n > 1 ? values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
+      const deviations = values.map((v) => Math.abs(v - med));
+      return {
+        n,
+        mean,
+        median: med,
+        std: Math.sqrt(variance),
+        mad: median(deviations),
+        min: Math.min(...values),
+        max: Math.max(...values)
+      };
+    }
+
+    function groupedStatistics(rows = state.tableRows) {
+      const groups = new Map();
+      for (const row of rows) {
+        const key = row.nominal.toFixed(4);
+        if (!groups.has(key)) groups.set(key, { nominal: row.nominal, values: [] });
+        groups.get(key).values.push(row.pixelSize);
+      }
+      return Array.from(groups.values())
+        .sort((a, b) => a.nominal - b.nominal)
+        .map((group) => ({ nominal: group.nominal, ...summarizeValues(group.values) }));
+    }
+
+    function renderStatsSummary() {
+      if (!el.statsSummaryBody) return;
+      el.statsSummaryBody.innerHTML = "";
+      for (const stats of state.statsGroups) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${stats.nominal.toFixed(4)}</td>
+          <td>${stats.n}</td>
+          <td>${stats.mean.toFixed(4)}</td>
+          <td>${stats.median.toFixed(4)}</td>
+          <td>${stats.std.toFixed(4)}</td>
+          <td>${stats.mad.toFixed(4)}</td>
+          <td>${stats.min.toFixed(4)}</td>
+          <td>${stats.max.toFixed(4)}</td>
+        `;
+        el.statsSummaryBody.appendChild(tr);
+      }
+    }
+
+    function updateAverages() {
+      state.statsGroups = groupedStatistics();
+      const groups = new Map(state.statsGroups.map((stats) => [stats.nominal.toFixed(4), stats]));
+      for (const row of state.tableRows) {
+        const stats = groups.get(row.nominal.toFixed(4));
+        row.average = `mean ${stats.mean.toFixed(4)} | median ${stats.median.toFixed(4)} | SD ${stats.std.toFixed(4)}`;
+      }
+      renderStatsSummary();
+    }
+
+    function updateTableActionButton() {
+      const editing = Number.isInteger(state.editingTableRow) &&
+        state.editingTableRow >= 0 &&
+        state.editingTableRow < state.tableRows.length;
+      el.addToTableBtn.textContent = editing ? "Update Row" : "Add to Table";
+    }
+
+    async function restoreTableRow(idx) {
+      const row = state.tableRows[idx];
+      if (!row) return;
+      state.selectedTableRow = idx;
+      state.editingTableRow = idx;
+      renderTable();
+      drawStatsPlot();
+      updateTableActionButton();
+      const cacheEntry = row.sourceKey ? state.imageCache.get(row.sourceKey) : null;
+      const currentMatches = state.image && row.sourceKey && state.image.sourceKey === row.sourceKey;
+      if (!cacheEntry && !currentMatches) {
+        setStatus("Cannot reload this row because its image source is no longer cached in this browser session.");
+        return;
+      }
+      try {
+        setStatus(`Reloading table row ${idx + 1}: ${row.filename}...`);
+        if (!currentMatches) {
+          setImage(cacheEntry.decoded, cacheEntry.filename, {
+            autoCalculate: false,
+            sourceKey: row.sourceKey,
+            keepTableEdit: true
+          });
+        }
+        if (row.selection) {
+          state.selection = { ...row.selection };
+          drawImage();
+        }
+        const ok = await calculateAll();
+        if (!ok) return;
+        if (row.analysisTab) activateAnalysisTab(row.analysisTab);
+        if (row.measurementPreviewType === "fft") {
+          if (state.fft && row.fftPeaks && row.fftPeaks.length) {
+            state.fft.peaks = row.fftPeaks.map((p) => ({ x: p.x, y: p.y }));
+            updateOverlayFromPeaks(false);
+          }
+          setApix(row.pixelSize);
+        } else if (state.nufft && row.radialPeakFreq != null) {
+          state.nufft.clickedFreq = row.radialPeakFreq;
+          setApix(row.pixelSize);
+          renderPowerCurve(row.radialPeakFreq);
+          renderHeatmap(row.radialPeakFreq);
+        } else {
+          setApix(row.pixelSize);
+        }
+        setStatus(`Loaded row ${idx + 1}. Adjust the region or peak, then click Update Row.`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Could not reload row ${idx + 1}: ${err.message}`);
+      }
+    }
+
+    function renderTable() {
+      el.regionTable.innerHTML = "";
+      if (state.hoveredTableRow !== null && state.hoveredTableRow >= state.tableRows.length) {
+        state.hoveredTableRow = null;
+      }
+      state.tableRows.forEach((row, idx) => {
+        const tr = document.createElement("tr");
+        if (idx === state.selectedTableRow) tr.classList.add("selected");
+        if (idx === state.hoveredTableRow) tr.classList.add("hovered");
+        tr.innerHTML = `
+          <td data-preview="image">${escapeHtml(row.filename)}</td>
+          <td data-preview="region">${row.regionSize}</td>
+          <td data-preview="region">${row.regionLocation}</td>
+          <td data-preview="radial">${row.pixelSize.toFixed(4)}</td>
+          <td>${row.nominal.toFixed(4)}</td>
+          <td>${row.average}</td>
+        `;
+        tr.querySelectorAll('[data-preview="image"]').forEach((cell) => bindTablePreview(cell, row, "image"));
+        tr.querySelectorAll('[data-preview="region"]').forEach((cell) => bindTablePreview(cell, row, "region"));
+        tr.querySelectorAll('[data-preview="radial"]').forEach((cell) => bindTablePreview(cell, row, "radial"));
+        tr.addEventListener("click", () => {
+          restoreTableRow(idx);
+        });
+        el.regionTable.appendChild(tr);
+      });
+      updateTableActionButton();
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    }
+
+    function highlightStatsTableRow(idx) {
+      if (!Number.isInteger(idx) || idx < 0 || idx >= state.tableRows.length) return;
+      state.hoveredTableRow = idx;
+      const rows = Array.from(el.regionTable.querySelectorAll("tr"));
+      rows.forEach((row, rowIdx) => {
+        row.classList.toggle("hovered", rowIdx === idx);
+      });
+      rows[idx]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+
+    function clearStatsTableHover() {
+      state.hoveredTableRow = null;
+      el.regionTable.querySelectorAll("tr.hovered").forEach((row) => row.classList.remove("hovered"));
+    }
+
+    function drawStatsPlot() {
+      state.statsPlot = null;
+      if (!state.tableRows.length) {
+        clearStatsTableHover();
+        emptyPlot(el.statsPlot, "Pixel Size Centered by Nominal Value", "No table data yet.");
+        return;
+      }
+      ensurePlotly();
+      const summaries = state.statsGroups.length ? state.statsGroups : groupedStatistics();
+      const nominals = summaries.map((stats) => stats.nominal);
+      const points = state.tableRows.map((r, idx) => ({ x: r.nominal, y: r.pixelSize - r.nominal, idx, row: r }));
+      const means = summaries.map((stats) => ({ x: stats.nominal, y: stats.mean - stats.nominal, stats }));
+      const medians = summaries.map((stats) => ({ x: stats.nominal, y: stats.median - stats.nominal, stats }));
+      const traces = [
+        {
+          type: "scatter",
+          mode: "markers",
+          name: "Regions",
+          x: points.map((p) => p.x),
+          y: points.map((p) => p.y),
+          customdata: points.map((p) => [p.idx, p.row.filename, p.row.pixelSize, p.row.nominal]),
+          marker: {
+            size: 9,
+            color: points.map((p) => p.idx === state.selectedTableRow ? "#d83a52" : "#7dd3fc"),
+            line: { color: "#2563eb", width: 1 }
+          },
+          hovertemplate: "File: %{customdata[1]}<br>Nominal: %{customdata[3]:.4f} A/px<br>Measured: %{customdata[2]:.4f} A/px<br>Delta: %{y:.4f} A/px<extra></extra>"
+        },
+        {
+          type: "scatter",
+          mode: "markers",
+          name: "Mean",
+          x: means.map((p) => p.x),
+          y: means.map((p) => p.y),
+          customdata: means.map((p) => [p.stats.n, p.stats.mean, p.stats.std]),
+          marker: { size: 11, color: "#2563eb", symbol: "diamond" },
+          error_y: {
+            type: "data",
+            array: means.map((p) => p.stats.std),
+            visible: true,
+            color: "rgba(37, 99, 235, 0.55)",
+            thickness: 1.2,
+            width: 4
+          },
+          hovertemplate: "Nominal: %{x:.4f} A/px<br>Mean pixel size: %{customdata[1]:.4f} A/px<br>Mean delta: %{y:.4f} A/px<br>Std dev: %{customdata[2]:.4f}<br>N: %{customdata[0]}<extra></extra>"
+        },
+        {
+          type: "scatter",
+          mode: "markers",
+          name: "Median",
+          x: medians.map((p) => p.x),
+          y: medians.map((p) => p.y),
+          customdata: medians.map((p) => [p.stats.n, p.stats.median, p.stats.mad]),
+          marker: { size: 10, color: "#0f9f6e", symbol: "square" },
+          hovertemplate: "Nominal: %{x:.4f} A/px<br>Median pixel size: %{customdata[1]:.4f} A/px<br>Median delta: %{y:.4f} A/px<br>MAD: %{customdata[2]:.4f}<br>N: %{customdata[0]}<extra></extra>"
+        }
+      ];
+      const yVals = [
+        ...points.map((p) => p.y),
+        ...summaries.flatMap((stats) => [
+          stats.mean - stats.nominal,
+          stats.median - stats.nominal,
+          stats.min - stats.nominal,
+          stats.max - stats.nominal
+        ]),
+        0
+      ];
+      const yMin = Math.min(...yVals);
+      const yMax = Math.max(...yVals);
+      const pad = Math.max(0.005, (yMax - yMin) * 0.18);
+      const xVals = nominals.length ? nominals : [0, 1];
+      const xMin = Math.min(...xVals);
+      const xMax = Math.max(...xVals);
+      const xPad = Math.max(0.02, (xMax - xMin || 0.1) * 0.18);
+      const layout = plotlyLayout(
+        "Pixel Size Centered by Nominal Value",
+        "Nominal Pixel Size (A/px)",
+        "Pixel Size - Nominal (A/px)",
+        {
+          titleFontSize: 15,
+          font: { color: PLOT_TEXT, family: "Inter, system-ui, sans-serif", size: 12 },
+          uirevision: `stats-${state.tableRows.length}`,
+          showlegend: true,
+          legend: { orientation: "h", x: 1, xanchor: "right", y: 1.12, font: { size: 11 } },
+          shapes: [{
+            type: "line",
+            x0: xMin - xPad,
+            x1: xMax + xPad,
+            y0: 0,
+            y1: 0,
+            line: { color: "#d83a52", width: 2 }
+          }],
+          xaxis: {
+            ...plotlyLayout("", "", "").xaxis,
+            title: { text: "Nominal Pixel Size (A/px)", font: { size: 12 } },
+            tickfont: { size: 11 },
+            range: [xMin - xPad, xMax + xPad]
+          },
+          yaxis: {
+            ...plotlyLayout("", "", "").yaxis,
+            title: { text: "Pixel Size - Nominal (A/px)", font: { size: 12 } },
+            tickfont: { size: 11 },
+            range: [yMin - pad, yMax + pad]
+          }
+        }
+      );
+      Plotly.react(el.statsPlot, traces, layout, PLOTLY_CONFIG);
+      state.statsPlot = { nominals, points, means, medians, summaries };
+      if (!state.plotlyBound.stats) {
+        el.statsPlot.on("plotly_click", (event) => {
+          const point = event.points && event.points[0];
+          if (!point || !point.customdata) return;
+          state.selectedTableRow = point.customdata[0];
+          state.editingTableRow = null;
+          renderTable();
+          drawStatsPlot();
+          setStatus(`Selected table row ${state.selectedTableRow + 1} from statistics plot.`);
+        });
+        el.statsPlot.on("plotly_hover", (event) => {
+          const point = event.points && event.points[0];
+          const idx = point?.customdata?.[0];
+          if (Number.isInteger(idx)) {
+            highlightStatsTableRow(idx);
+          } else {
+            clearStatsTableHover();
+          }
+        });
+        el.statsPlot.on("plotly_unhover", clearStatsTableHover);
+        state.plotlyBound.stats = true;
+      };
+    }
+
+    function downloadDataUrl(dataUrl, filename) {
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = filename;
+      link.click();
+    }
+
+    function downloadBlob(filename, blob) {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+
+    function downloadTextFile(filename, text, mime = "text/csv") {
+      downloadBlob(filename, new Blob([text], { type: mime }));
+    }
+
+    function tableToCsv(header, rows) {
+      return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+    }
+
+    function defaultResultsPrefix(date = new Date()) {
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, "0");
+      const dd = String(date.getDate()).padStart(2, "0");
+      return `webCalEM_results_${yyyy}-${mm}-${dd}`;
+    }
+
+    function sanitizeFilePrefix(prefix, fallback = defaultResultsPrefix()) {
+      return (prefix || fallback).trim().replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || fallback;
+    }
+
+    async function dataUrlToBlob(dataUrl) {
+      const response = await fetch(dataUrl);
+      return response.blob();
+    }
+
+    async function saveBlobToDirectory(directoryHandle, filename, blob) {
+      const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+
+    async function downloadResults() {
+      const defaultPrefix = defaultResultsPrefix();
+      const requestedPrefix = window.prompt(
+        "Prefix for the result files:",
+        defaultPrefix
+      );
+      if (requestedPrefix === null) {
+        setStatus("Download cancelled.");
+        return;
+      }
+      const prefix = sanitizeFilePrefix(requestedPrefix || defaultPrefix, defaultPrefix);
+      let directoryHandle = null;
+      let useDirectoryPicker = false;
+      if (window.showDirectoryPicker) {
+        try {
+          directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+          useDirectoryPicker = true;
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            setStatus("Download cancelled.");
+            return;
+          }
+          console.warn("Folder picker unavailable; using browser downloads.", err);
+        }
+      }
+
+      const groups = state.statsGroups.length ? state.statsGroups : groupedStatistics();
+      const measurementsHeader = [
+        "Filename",
+        "Region Size",
+        "Region Location",
+        "Pixel Size",
+        "Nominal",
+        "Group Statistics"
+      ];
+      const measurementRows = state.tableRows.map((r) => [
+        r.filename,
+        r.regionSize,
+        r.regionLocation,
+        r.pixelSize.toFixed(4),
+        r.nominal.toFixed(4),
+        r.average || ""
+      ]);
+      const statisticsHeader = ["Nominal", "N", "Mean", "Median", "Std Dev", "MAD", "Min", "Max"];
+      const statisticsRows = groups.map((stats) => [
+        stats.nominal.toFixed(4),
+        stats.n,
+        stats.mean.toFixed(4),
+        stats.median.toFixed(4),
+        stats.std.toFixed(4),
+        stats.mad.toFixed(4),
+        stats.min.toFixed(4),
+        stats.max.toFixed(4)
+      ]);
+      el.downloadCsvBtn.disabled = true;
+      try {
+        const artifacts = [{
+          filename: `${prefix}_measurements.csv`,
+          blob: new Blob([tableToCsv(measurementsHeader, measurementRows)], { type: "text/csv" })
+        }, {
+          filename: `${prefix}_group_statistics.csv`,
+          blob: new Blob([tableToCsv(statisticsHeader, statisticsRows)], { type: "text/csv" })
+        }];
+        if (window.Plotly && el.statsPlot && el.statsPlot._fullLayout) {
+          const width = Math.max(720, Math.round(el.statsPlot.getBoundingClientRect().width || 900));
+          const height = Math.max(420, Math.round(el.statsPlot.getBoundingClientRect().height || 520));
+          const dataUrl = await Plotly.toImage(el.statsPlot, { format: "png", width, height, scale: 2 });
+          artifacts.push({
+            filename: `${prefix}_statistics_plot.png`,
+            blob: await dataUrlToBlob(dataUrl)
+          });
+        }
+        if (useDirectoryPicker && directoryHandle) {
+          for (const artifact of artifacts) {
+            await saveBlobToDirectory(directoryHandle, artifact.filename, artifact.blob);
+          }
+        } else {
+          for (const artifact of artifacts) downloadBlob(artifact.filename, artifact.blob);
+        }
+        const locationText = useDirectoryPicker ? "selected folder" : "browser downloads folder";
+        setStatus(`Saved ${artifacts.length} result files to the ${locationText}.`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Download failed: ${err.message}`);
+      } finally {
+        el.downloadCsvBtn.disabled = false;
+      }
+    }
+
+    function csvCell(value) {
+      const s = String(value);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    function isValidUrl(value) {
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function scheduleUrlLoad(delay = 650) {
+      clearTimeout(state.urlLoadTimer);
+      const url = el.downloadUrl.value.trim();
+      if (!url || !isValidUrl(url) || url === state.lastLoadedUrl) return;
+      const token = ++state.urlLoadToken;
+      state.urlLoadTimer = setTimeout(() => loadUrl(false, token), delay);
+    }
+
+    async function loadUrl(force = false, scheduledToken = null) {
+      const url = el.downloadUrl.value.trim();
+      if (!url || !isValidUrl(url)) {
+        if (url) setStatus("Paste a complete image URL to load it.");
+        return;
+      }
+      if (!force && url === state.lastLoadedUrl) return;
+      const token = scheduledToken ?? ++state.urlLoadToken;
+      try {
+        setStatus(`Downloading ${url}...`);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        if (token !== state.urlLoadToken) return;
+        const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "downloaded_image");
+        const decoded = await decodeImageBuffer(name, buffer, response.headers.get("content-type") || "");
+        if (token !== state.urlLoadToken) return;
+        state.lastLoadedUrl = url;
+        setImage(decoded, name, { sourceKey: urlSourceKey(url) });
+      } catch (err) {
+        if (token !== state.urlLoadToken) return;
+        console.error(err);
+        setStatus(`URL load failed: ${err.message}`);
+      }
+    }
+
+    function updateAutoSampleControls() {
+      const enabled = !!el.autoSample.checked;
+      el.autoSampleControls.classList.toggle("hidden", !enabled);
+      const controlsEnabled = enabled && !state.batchRunning;
+      el.autoSampleN.disabled = !controlsEnabled;
+      el.autoSampleSize.disabled = !controlsEnabled;
+      el.autoSampleStartBtn.disabled = !enabled || state.batchRunning || !state.uploads.length;
+      const sizePct = Number(el.autoSampleSize.value);
+      let n = Math.round(Number(el.autoSampleN.value) || 4);
+      n = clamp(n, 1, 100);
+      if (sizePct >= 100) n = 1;
+      el.autoSampleN.value = String(n);
+    }
+
+    function autoSampleFraction() {
+      return clamp(Number(el.autoSampleSize.value) / 100, 0.01, 1);
+    }
+
+    function autoSampleCount() {
+      return autoSampleFraction() >= 1 ? 1 : clamp(Math.round(Number(el.autoSampleN.value) || 4), 1, 100);
+    }
+
+    function autoSampleRegions(width, height, count, fraction) {
+      const n = fraction >= 1 ? 1 : clamp(Math.round(count), 1, 100);
+      const spanScale = Math.sqrt(clamp(fraction, 0.01, 1));
+      const regionW = Math.max(50, Math.min(width, width * spanScale));
+      const regionH = Math.max(50, Math.min(height, height * spanScale));
+      if (fraction >= 1) {
+        return [{ x0: 0, x1: width, y0: 0, y1: height }];
+      }
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
+      const regions = [];
+      for (let row = 0; row < rows && regions.length < n; row++) {
+        const cy = rows === 1 ? height / 2 : regionH / 2 + row * (height - regionH) / (rows - 1);
+        for (let col = 0; col < cols && regions.length < n; col++) {
+          const cx = cols === 1 ? width / 2 : regionW / 2 + col * (width - regionW) / (cols - 1);
+          const x0 = clamp(Math.round(cx - regionW / 2), 0, Math.max(0, width - regionW));
+          const y0 = clamp(Math.round(cy - regionH / 2), 0, Math.max(0, height - regionH));
+          regions.push({
+            x0,
+            x1: Math.min(width, Math.round(x0 + regionW)),
+            y0,
+            y1: Math.min(height, Math.round(y0 + regionH))
+          });
+        }
+      }
+      return regions;
+    }
+
+    async function runAutoSampleBatch() {
+      if (state.batchRunning || !el.autoSample.checked || !state.uploads.length) return;
+      state.batchRunning = true;
+      const originalDisabled = {
+        fileInput: el.fileInput.disabled,
+        autoSample: el.autoSample.disabled,
+        autoSampleN: el.autoSampleN.disabled,
+        autoSampleSize: el.autoSampleSize.disabled,
+        autoSampleStartBtn: el.autoSampleStartBtn.disabled
+      };
+      el.fileInput.disabled = true;
+      el.autoSample.disabled = true;
+      el.autoSampleN.disabled = true;
+      el.autoSampleSize.disabled = true;
+      el.autoSampleStartBtn.disabled = true;
+      let added = 0;
+      try {
+        for (let fileIdx = 0; fileIdx < state.uploads.length; fileIdx++) {
+          const file = state.uploads[fileIdx];
+          state.selectedUpload = fileIdx;
+          renderUploadTable();
+          setStatus(`Autosampling ${file.name} (${fileIdx + 1}/${state.uploads.length})...`);
+          const buffer = await file.arrayBuffer();
+          const decoded = await decodeImageBuffer(file.name, buffer, file.type);
+          setImage(decoded, file.name, { autoCalculate: false, sourceKey: uploadSourceKey(file, fileIdx) });
+          const regions = autoSampleRegions(
+            state.image.displayWidth,
+            state.image.displayHeight,
+            autoSampleCount(),
+            autoSampleFraction()
+          );
+          for (let regionIdx = 0; regionIdx < regions.length; regionIdx++) {
+            state.selection = regions[regionIdx];
+            drawImage();
+            setStatus(`Autosampling ${file.name}: region ${regionIdx + 1}/${regions.length}...`);
+            const ok = await calculateAll();
+            if (!ok || !state.nufft || state.nufft.clickedFreq == null) continue;
+            await addTableRow({
+              includePreviews: false,
+              includeRegionPreview: true,
+              previewMode: "radial",
+              quiet: true
+            });
+            added += 1;
+          }
+        }
+        setStatus(`Autosample complete: added ${added} region${added === 1 ? "" : "s"} to the statistics table.`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Autosample failed: ${err.message}`);
+      } finally {
+        state.batchRunning = false;
+        el.fileInput.disabled = originalDisabled.fileInput;
+        el.autoSample.disabled = originalDisabled.autoSample;
+        el.autoSampleN.disabled = originalDisabled.autoSampleN;
+        el.autoSampleSize.disabled = originalDisabled.autoSampleSize;
+        el.autoSampleStartBtn.disabled = originalDisabled.autoSampleStartBtn;
+        updateAutoSampleControls();
+      }
+    }
+
+    async function handleFiles(files) {
+      state.uploads = Array.from(files || []);
+      state.selectedUpload = state.uploads.length ? 0 : -1;
+      if (state.uploads.length) el.uploadTableWrap.open = true;
+      renderUploadTable();
+      updateAutoSampleControls();
+      if (!state.uploads.length) return;
+      await loadUpload(0);
+    }
+
+    function renderUploadTable() {
+      el.uploadTable.innerHTML = "";
+      el.uploadTableSummary.textContent = `Uploaded files (${state.uploads.length})`;
+      state.uploads.forEach((file, idx) => {
+        const tr = document.createElement("tr");
+        if (idx === state.selectedUpload) tr.classList.add("selected");
+        tr.innerHTML = `<td>${escapeHtml(file.name)}</td><td>${parseNominal(file.name).toFixed(3)}</td>`;
+        tr.addEventListener("click", () => loadUpload(idx));
+        el.uploadTable.appendChild(tr);
+      });
+    }
+
+    async function loadUpload(idx) {
+      const file = state.uploads[idx];
+      if (!file) return;
+      try {
+        state.selectedUpload = idx;
+        renderUploadTable();
+        setStatus(`Reading ${file.name}...`);
+        const buffer = await file.arrayBuffer();
+        const decoded = await decodeImageBuffer(file.name, buffer, file.type);
+        setImage(decoded, file.name, { sourceKey: uploadSourceKey(file, idx) });
+      } catch (err) {
+        console.error(err);
+        setStatus(`Upload load failed: ${err.message}`);
+      }
+    }
+
+    function wireEvents() {
+      document.querySelectorAll("input[name=method]").forEach((radio) => {
+        radio.addEventListener("change", () => {
+          const isUrl = document.querySelector("input[name=method]:checked").value === "url";
+          el.urlControls.classList.toggle("hidden", !isUrl);
+          el.uploadControls.classList.toggle("hidden", isUrl);
+          el.uploadTableWrap.classList.toggle("hidden", isUrl);
+          if (isUrl) scheduleUrlLoad(0);
+        });
+      });
+      document.querySelectorAll(".tabs button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
+          document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+          btn.classList.add("active");
+          $(btn.dataset.tab).classList.add("active");
+          queuePlotResize();
+        });
+      });
+      el.downloadUrl.addEventListener("input", () => scheduleUrlLoad());
+      el.downloadUrl.addEventListener("change", () => scheduleUrlLoad(0));
+      el.fileInput.addEventListener("change", (event) => handleFiles(event.target.files));
+      el.autoSample.addEventListener("change", () => {
+        updateAutoSampleControls();
+      });
+      el.autoSampleStartBtn.addEventListener("click", runAutoSampleBatch);
+      el.autoSampleN.addEventListener("input", updateAutoSampleControls);
+      el.autoSampleSize.addEventListener("change", updateAutoSampleControls);
+      el.resolutionType.addEventListener("change", () => {
+        el.customResolutionWrap.classList.toggle("hidden", el.resolutionType.value !== "Custom");
+        if (state.region) calculateAll();
+      });
+      el.customResolution.addEventListener("change", () => state.region && calculateAll());
+      el.nominalApix.addEventListener("change", () => {
+        setApix(Number(el.nominalApix.value) || 1);
+        if (state.region) startNufft();
+      });
+      el.apixSlider.addEventListener("input", () => setApix(el.apixSlider.value, false));
+      el.apixSetBtn.addEventListener("click", () => setApix(Number(el.apixExact.value) || 1));
+      el.contrast.addEventListener("input", () => {
+        el.contrastLabel.textContent = Number(el.contrast.value).toFixed(1);
+        if (state.fft) {
+          state.fft.display = magnitudeToDisplay(state.fft.mag, Number(el.contrast.value));
+          drawFft();
+        }
+      });
+      [el.nufftRSampling, el.nufftThetaSampling, el.nufftDisplayRange].forEach((control) => {
+        control.addEventListener("input", () => {
+          el.nufftRLabel.textContent = Number(el.nufftRSampling.value).toFixed(1);
+          el.nufftThetaLabel.textContent = Number(el.nufftThetaSampling.value).toFixed(1);
+          el.nufftRangeLabel.textContent = Number(el.nufftDisplayRange.value).toFixed(1);
+        });
+        control.addEventListener("change", () => state.region && startNufft());
+      });
+      el.nufftLogY.addEventListener("change", () => {
+        renderPowerCurve(state.nufft && state.nufft.clickedFreq);
+        renderHeatmap(state.nufft && state.nufft.clickedFreq);
+      });
+      [el.autoCorrect, el.fftAutoCorrect].forEach((control) => {
+        control.addEventListener("change", () => {
+          const checked = control.checked;
+          el.autoCorrect.checked = checked;
+          el.fftAutoCorrect.checked = checked;
+        });
+      });
+      el.detectPeaksBtn.addEventListener("click", () => detectPeaks(false));
+      el.clearOverlayBtn.addEventListener("click", clearOverlay);
+      el.addToTableBtn.addEventListener("click", () => addTableRow({ replaceIndex: state.editingTableRow }));
+      el.deleteSelectedBtn.addEventListener("click", () => {
+        if (state.selectedTableRow == null) return;
+        state.tableRows.splice(state.selectedTableRow, 1);
+        state.selectedTableRow = null;
+        state.editingTableRow = null;
+        updateAverages();
+        renderTable();
+        drawStatsPlot();
+      });
+      el.clearTableBtn.addEventListener("click", () => {
+        state.tableRows = [];
+        state.selectedTableRow = null;
+        state.editingTableRow = null;
+        updateAverages();
+        renderTable();
+        drawStatsPlot();
+      });
+      el.downloadCsvBtn.addEventListener("click", downloadResults);
+
+      el.imageCanvas.addEventListener("pointerdown", (event) => {
+        if (!state.image) return;
+        const p = canvasPoint(el.imageCanvas, event);
+        state.drag = { start: p };
+        state.selection = { x0: p.x, x1: p.x, y0: p.y, y1: p.y };
+        el.imageCanvas.setPointerCapture(event.pointerId);
+      });
+      el.imageCanvas.addEventListener("pointermove", (event) => {
+        if (!state.image) return;
+        if (state.drag) {
+          const p = canvasPoint(el.imageCanvas, event);
+          state.selection.x1 = clamp(p.x, 0, state.image.displayWidth);
+          state.selection.y1 = clamp(p.y, 0, state.image.displayHeight);
+          drawImage();
+        }
+        hoverImage(event);
+      });
+      el.imageCanvas.addEventListener("pointerup", (event) => {
+        if (!state.drag) return;
+        state.drag = null;
+        el.imageCanvas.releasePointerCapture(event.pointerId);
+        const s = normalizedSelection();
+        if (Math.abs(s.x1 - s.x0) < 20 || Math.abs(s.y1 - s.y0) < 20) {
+          state.selection = defaultSelection(state.image.displayWidth, state.image.displayHeight);
+        }
+        drawImage();
+        hoverImage(event);
+        if (selectionKey() !== state.lastSelectionKey) calculateAll();
+      });
+      el.imageCanvas.addEventListener("pointerleave", hideHover);
+      el.imageCanvas.addEventListener("pointercancel", hideHover);
+
+      el.fftCanvas.addEventListener("pointermove", hoverFft);
+      el.fftCanvas.addEventListener("pointerleave", hideHover);
+      el.fftCanvas.addEventListener("pointercancel", hideHover);
+
+      el.fftCanvas.addEventListener("click", (event) => {
+        if (performance.now() < state.suppressPlotClickUntil) return;
+        const fft = state.fft;
+        if (!fft) return;
+        const p = fftCanvasToData(canvasPoint(el.fftCanvas, event), fft);
+        const addPoint = correctedFftPeakPoint(p);
+        let removeIdx = -1;
+        const view = fftView(fft);
+        const threshold = Math.max(8, Math.max(view.xMax - view.xMin, view.yMax - view.yMin) / 80);
+        for (let i = 0; i < fft.peaks.length; i++) {
+          if (Math.hypot(fft.peaks[i].x - p.x, fft.peaks[i].y - p.y) < threshold ||
+              Math.hypot(fft.peaks[i].x - addPoint.x, fft.peaks[i].y - addPoint.y) < threshold) {
+            removeIdx = i;
+            break;
+          }
+        }
+        if (removeIdx >= 0) fft.peaks.splice(removeIdx, 1);
+        else fft.peaks.push(addPoint);
+        updateOverlayFromPeaks(false);
+      });
+
+    }
+
+    function init() {
+      wireEvents();
+      setupPlotInteractions();
+      setupLayoutSplitter();
+      setupWorkspaceSplitter();
+      setupStatsSplitter();
+      setupCardExpansion();
+      setupComponentTips();
+      fitWorkspaceToViewport();
+      setupResponsiveCanvases();
+      redrawInteractivePlots();
+      drawPowerPlaceholder();
+      drawHeatmapPlaceholder("Click the power curve after NuFFT finishes.");
+      drawStatsPlot();
+      el.nufftRLabel.textContent = Number(el.nufftRSampling.value).toFixed(1);
+      el.nufftThetaLabel.textContent = Number(el.nufftThetaSampling.value).toFixed(1);
+      el.nufftRangeLabel.textContent = Number(el.nufftDisplayRange.value).toFixed(1);
+      el.contrastLabel.textContent = Number(el.contrast.value).toFixed(1);
+      updateAutoSampleControls();
+      loadUrl(true);
+    }
+
+    init();
+  })();
+  </script>
+</body>
+</html>
