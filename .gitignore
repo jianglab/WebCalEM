@@ -23,6 +23,7 @@ env/
 .DS_Store
 Thumbs.db
 TODO.md
+IMPLEMENTATION_SUMMARY.md
 morph.py
 app-core.py
 .browsercache.json

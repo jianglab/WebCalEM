@@ -705,7 +705,58 @@
       margin-top: 0;
       border-top: 1px solid var(--line);
       background: var(--panel-soft);
+      flex-direction: column;
+      align-items: stretch;
       justify-content: center;
+    }
+
+    .table-color-legend {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .legend-swatch {
+      width: 18px;
+      height: 10px;
+      border: 1px solid rgba(15, 23, 42, 0.16);
+      border-radius: 3px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+
+    .legend-swatch.manual {
+      background: #edf6ff;
+    }
+
+    .legend-swatch.auto {
+      background: #fff1f5;
+    }
+
+    .legend-swatch.auto-outlier {
+      background: #f8aebd;
+    }
+
+    .legend-swatch.auto-edited {
+      background: #bcd8ff;
+    }
+
+    .stats-action-buttons {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .stats-splitter {
@@ -814,8 +865,47 @@
       z-index: 1;
     }
 
+    .sortable-header {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .sortable-header::after {
+      content: "↕";
+      margin-left: 5px;
+      color: #7a8798;
+      font-size: 11px;
+    }
+
+    .sortable-header.sorted-asc::after {
+      content: "↑";
+      color: var(--blue);
+    }
+
+    .sortable-header.sorted-desc::after {
+      content: "↓";
+      color: var(--blue);
+    }
+
+    tr.measurement-row-manual {
+      background: #edf6ff;
+    }
+
+    tr.measurement-row-auto {
+      background: #fff1f5;
+    }
+
+    tr.measurement-row-auto-outlier {
+      background: #f8aebd;
+    }
+
+    tr.measurement-row-auto-edited {
+      background: #bcd8ff;
+    }
+
     tr.selected {
-      background: #e9f1ff;
+      outline: 2px solid rgba(37, 99, 235, 0.66);
+      outline-offset: -2px;
     }
 
     tr.hovered {
@@ -825,7 +915,8 @@
     }
 
     tr.selected.hovered {
-      background: #dbeafe;
+      outline-color: rgba(37, 99, 235, 0.82);
+      box-shadow: inset 0 0 0 999px rgba(255, 247, 214, 0.58);
     }
 
     .preview-cell {
@@ -877,6 +968,37 @@
       max-width: min(520px, calc(100vw - 28px));
       padding: 12px 13px;
       font-size: 12.5px;
+    }
+
+    .hover-tip.fft-tip {
+      max-width: min(210px, calc(100vw - 28px));
+    }
+
+    .fft-magnifier {
+      display: grid;
+      grid-template-columns: repeat(5, 16px);
+      grid-template-rows: repeat(5, 16px);
+      width: 80px;
+      height: 80px;
+      margin: 8px 0 7px;
+      overflow: hidden;
+      border: 1px solid rgba(226, 232, 240, 0.28);
+      border-radius: 6px;
+      image-rendering: pixelated;
+      background: #0f172a;
+    }
+
+    .fft-magnifier-cell {
+      width: 16px;
+      height: 16px;
+      box-shadow: inset 0 0 0 0.5px rgba(15, 23, 42, 0.26);
+    }
+
+    .fft-magnifier-cell.center {
+      outline: 2px solid #38bdf8;
+      outline-offset: -2px;
+      position: relative;
+      z-index: 1;
     }
 
     .hover-tip .tip-html {
@@ -1185,6 +1307,7 @@
           <button id="apixSetBtn">Set</button>
         </div>
         <button id="addToTableBtn" class="success">Add to Table</button>
+        <button id="removeCurrentRowBtn" class="danger hidden">Remove Row</button>
       </div>
     </section>
     </section>
@@ -1200,11 +1323,13 @@
         <table>
           <thead>
             <tr>
-              <th>Filename</th>
-              <th>Region Size</th>
+              <th class="sortable-header" data-sort-key="filename">Filename</th>
+              <th>Specimen</th>
+              <th class="sortable-header" data-sort-key="regionSize">Region Size</th>
               <th>Region Location</th>
               <th>Pixel Size</th>
               <th>Nominal</th>
+              <th class="sortable-header" data-sort-key="delta">Delta</th>
               <th>Group Statistics</th>
             </tr>
           </thead>
@@ -1212,9 +1337,17 @@
         </table>
       </div>
       <div class="card-body row stats-actions">
-        <button id="deleteSelectedBtn" class="danger">Delete Selected</button>
-        <button id="clearTableBtn" class="secondary">Clear Table</button>
-        <button id="downloadCsvBtn">Download Results</button>
+        <div class="table-color-legend" aria-label="Measurement table color legend">
+          <span class="legend-chip"><span class="legend-swatch manual"></span>Manual</span>
+          <span class="legend-chip"><span class="legend-swatch auto"></span>Autosample</span>
+          <span class="legend-chip"><span class="legend-swatch auto-outlier"></span>Autosample outlier</span>
+          <span class="legend-chip"><span class="legend-swatch auto-edited"></span>Edited autosample</span>
+        </div>
+        <div class="stats-action-buttons">
+          <button id="deleteSelectedBtn" class="danger">Delete Selected</button>
+          <button id="clearTableBtn" class="secondary">Clear Table</button>
+          <button id="downloadCsvBtn">Download Results</button>
+        </div>
       </div>
 	    </div>
 	    <div id="statsSplitter" class="stats-splitter" role="separator" aria-label="Resize statistics table and plot"></div>
@@ -1230,6 +1363,7 @@
             <thead>
               <tr>
                 <th>Nominal</th>
+                <th>Specimen</th>
                 <th>N</th>
                 <th>Mean</th>
                 <th>Median</th>
@@ -1272,12 +1406,18 @@
     const PLOT_BG = "#e7eef8";
     const PLOT_TEXT = "#283c5f";
     const PLOT_LINE = "#5b6dfb";
+    const SPECIMEN_COLORS = ["#8ecae6", "#e58a8c", "#84cc9b", "#f2c46d", "#b59be8", "#7dd3fc"];
     const PLOTLY_CONFIG = {
       responsive: true,
       scrollZoom: true,
       displaylogo: false,
       modeBarButtonsToRemove: ["lasso2d", "select2d"],
       toImageButtonOptions: { format: "png", filename: "magcal_plot", scale: 2 }
+    };
+    const STATS_PLOTLY_CONFIG = {
+      ...PLOTLY_CONFIG,
+      modeBarButtonsToRemove: ["lasso2d"],
+      scrollZoom: false
     };
 
     const el = {
@@ -1322,6 +1462,7 @@
       apixExact: $("apixExact"),
       apixSetBtn: $("apixSetBtn"),
       addToTableBtn: $("addToTableBtn"),
+      removeCurrentRowBtn: $("removeCurrentRowBtn"),
       regionTable: $("regionTable"),
       statsSummaryBody: $("statsSummaryBody"),
       deleteSelectedBtn: $("deleteSelectedBtn"),
@@ -1348,8 +1489,10 @@
       tableRows: [],
       statsGroups: [],
       selectedTableRow: null,
+      selectedTableRows: new Set(),
       editingTableRow: null,
       hoveredTableRow: null,
+      tableSort: { key: null, direction: "asc" },
       drag: null,
       powerPlot: null,
       heatmapPlot: null,
@@ -1395,7 +1538,7 @@
         hideHover();
         return;
       }
-      el.hoverTip.classList.remove("preview-tip", "latex-tip");
+      el.hoverTip.classList.remove("preview-tip", "latex-tip", "fft-tip");
       el.hoverTip.innerHTML = lines.map((line, idx) => {
         const klass = idx === 0 ? "tip-title" : idx === lines.length - 1 ? "tip-muted" : "";
         return `<div class="${klass}">${escapeHtml(line)}</div>`;
@@ -1405,7 +1548,7 @@
     }
 
     function showHoverHtmlTip(event, title, html) {
-      el.hoverTip.classList.remove("preview-tip");
+      el.hoverTip.classList.remove("preview-tip", "fft-tip");
       el.hoverTip.classList.add("latex-tip");
       el.hoverTip.innerHTML = `
         <div class="tip-title">${escapeHtml(title)}</div>
@@ -1419,6 +1562,18 @@
       }
     }
 
+    function showFftHoverTip(event, lines, magnifierHtml) {
+      el.hoverTip.classList.remove("preview-tip", "latex-tip");
+      el.hoverTip.classList.add("fft-tip");
+      el.hoverTip.innerHTML = `
+        ${lines.slice(0, 2).map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
+        ${magnifierHtml}
+        <div class="tip-muted">${escapeHtml(lines[2] || "")}</div>
+      `;
+      el.hoverTip.classList.remove("hidden");
+      moveHoverTip(event);
+    }
+
     function showHoverPreview(event, title, imageSrc, lines = []) {
       if (!imageSrc) {
         showHoverTip(event, [
@@ -1429,7 +1584,7 @@
         ]);
         return;
       }
-      el.hoverTip.classList.remove("latex-tip");
+      el.hoverTip.classList.remove("latex-tip", "fft-tip");
       el.hoverTip.classList.add("preview-tip");
       const meta = lines.length
         ? `<div class="tip-meta">${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>`
@@ -1480,16 +1635,47 @@
       el.hoverCrosshair.classList.add("hidden");
     }
 
-    function showZoomBox(canvas, start, end) {
+    function constrainedSquareZoomBox(canvas, start, end) {
       const rect = canvas.getBoundingClientRect();
-      const x0 = rect.left + Math.min(start.x, end.x) / canvas.width * rect.width;
-      const y0 = rect.top + Math.min(start.y, end.y) / canvas.height * rect.height;
-      const x1 = rect.left + Math.max(start.x, end.x) / canvas.width * rect.width;
-      const y1 = rect.top + Math.max(start.y, end.y) / canvas.height * rect.height;
-      el.zoomBox.style.left = `${x0}px`;
-      el.zoomBox.style.top = `${y0}px`;
-      el.zoomBox.style.width = `${Math.max(1, x1 - x0)}px`;
-      el.zoomBox.style.height = `${Math.max(1, y1 - y0)}px`;
+      const sx = rect.left + start.x / canvas.width * rect.width;
+      const sy = rect.top + start.y / canvas.height * rect.height;
+      const ex = rect.left + end.x / canvas.width * rect.width;
+      const ey = rect.top + end.y / canvas.height * rect.height;
+      const side = Math.min(Math.abs(ex - sx), Math.abs(ey - sy));
+      const cx1 = sx + Math.sign(ex - sx || 1) * side;
+      const cy1 = sy + Math.sign(ey - sy || 1) * side;
+      const left = Math.min(sx, cx1);
+      const right = Math.max(sx, cx1);
+      const top = Math.min(sy, cy1);
+      const bottom = Math.max(sy, cy1);
+      return {
+        left,
+        right,
+        top,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+        dataLeft: (left - rect.left) / rect.width * canvas.width,
+        dataRight: (right - rect.left) / rect.width * canvas.width,
+        dataTop: (top - rect.top) / rect.height * canvas.height,
+        dataBottom: (bottom - rect.top) / rect.height * canvas.height
+      };
+    }
+
+    function showZoomBox(canvas, start, end, square = false) {
+      const rect = canvas.getBoundingClientRect();
+      const box = square
+        ? constrainedSquareZoomBox(canvas, start, end)
+        : {
+            left: rect.left + Math.min(start.x, end.x) / canvas.width * rect.width,
+            top: rect.top + Math.min(start.y, end.y) / canvas.height * rect.height,
+            width: Math.abs(end.x - start.x) / canvas.width * rect.width,
+            height: Math.abs(end.y - start.y) / canvas.height * rect.height
+          };
+      el.zoomBox.style.left = `${box.left}px`;
+      el.zoomBox.style.top = `${box.top}px`;
+      el.zoomBox.style.width = `${Math.max(1, box.width)}px`;
+      el.zoomBox.style.height = `${Math.max(1, box.height)}px`;
       el.zoomBox.classList.remove("hidden");
     }
 
@@ -1765,6 +1951,46 @@
       if (type.startsWith("Gold")) return 2.355;
       if (type.startsWith("Ice")) return 3.661;
       return Number(el.customResolution.value) || 3.0;
+    }
+
+    function currentSpecimenInfo() {
+      const type = el.resolutionType.value;
+      const resolution = getResolution();
+      if (type.startsWith("Graphene")) return { type, short: "GO", label: "GO (Graphene)", resolution };
+      if (type.startsWith("Gold")) return { type, short: "AU", label: "AU (Gold)", resolution };
+      if (type.startsWith("Ice")) return { type, short: "Ice", label: "Ice", resolution };
+      return { type: "Custom", short: "Custom", label: `Custom (${resolution.toFixed(3)} A)`, resolution };
+    }
+
+    function rowSpecimenInfo(row) {
+      if (row && row.specimenShort) {
+        return {
+          short: row.specimenShort,
+          label: row.specimen || row.specimenShort,
+          resolution: row.specimenResolution
+        };
+      }
+      return { short: "Specimen", label: "Specimen", resolution: null };
+    }
+
+    function groupKeyForRow(row) {
+      const specimen = rowSpecimenInfo(row);
+      return `${row.nominal.toFixed(4)}|${specimen.short}`;
+    }
+
+    function applyRowCalibrationSettings(row) {
+      if (!row) return;
+      const optionValues = Array.from(el.resolutionType.options).map((option) => option.value);
+      if (row.specimenType && optionValues.includes(row.specimenType)) {
+        el.resolutionType.value = row.specimenType;
+      } else if (row.specimenResolution) {
+        el.resolutionType.value = "Custom";
+      }
+      if (row.customResolution || row.specimenResolution) {
+        el.customResolution.value = Number(row.customResolution || row.specimenResolution).toFixed(3);
+      }
+      el.customResolutionWrap.classList.toggle("hidden", el.resolutionType.value !== "Custom");
+      if (Number.isFinite(row.nominal)) el.nominalApix.value = row.nominal.toFixed(4);
     }
 
     function setApix(value, updateSlider = true) {
@@ -2505,7 +2731,8 @@
     function startNufft() {
       if (!state.region) return Promise.resolve(null);
       if (state.nufftWorker) state.nufftWorker.terminate();
-      if (!state.fft) return Promise.resolve(null);
+      const fft = state.fft;
+      if (!fft) return Promise.resolve(null);
       const nominal = Number(el.nominalApix.value) || 1;
       const resolution = getResolution();
       const displayRange = Number(el.nufftDisplayRange.value);
@@ -2513,7 +2740,11 @@
       const thetaSamples = Math.min(Math.max(36, Math.floor(360 * Number(el.nufftThetaSampling.value))), 1800);
       setStatus(`Sampling matched radial profile (${rSamples} radial x ${thetaSamples} angular)...`);
       return new Promise((resolve) => window.setTimeout(() => {
-        const sampled = samplePolarFromFft(state.fft, nominal, resolution, displayRange, rSamples, thetaSamples);
+        if (state.fft !== fft) {
+          resolve(null);
+          return;
+        }
+        const sampled = samplePolarFromFft(fft, nominal, resolution, displayRange, rSamples, thetaSamples);
         state.nufft = {
           pwrCurve: sampled.pwrCurve,
           pwr2d: sampled.pwr2d,
@@ -2521,13 +2752,13 @@
           resolutions: sampled.resolutions,
           rSamples,
           thetaSamples,
-          points: state.fft.n * state.fft.n,
+          points: fft.n * fft.n,
           nominalApix: nominal,
           targetResolution: resolution,
           revision: ++state.plotRevision,
           clickedFreq: null
         };
-        el.nufftMeta.textContent = `${rSamples} radial x ${thetaSamples} angular samples from the full ${state.fft.n} x ${state.fft.n} FFT grid.`;
+        el.nufftMeta.textContent = `${rSamples} radial x ${thetaSamples} angular samples from the full ${fft.n} x ${fft.n} FFT grid.`;
         renderPowerCurve();
         const peak = findBestPowerPeak();
         if (peak) {
@@ -2909,8 +3140,9 @@
         mode: "lines",
         x: Array.from(n.freqs),
         y: Array.from(y),
+        customdata: Array.from(n.freqs, (freq) => n.nominalApix * freq * n.targetResolution),
         line: { color: PLOT_LINE, width: 2.4 },
-        hovertemplate: "Frequency: %{x:.6f} 1/A<br>Intensity: %{y:.4f}<extra></extra>"
+        hovertemplate: "Spatial frequency: %{x:.6f} 1/A<br>Calibrated pixel size: %{customdata:.4f} A/px<extra></extra>"
       }];
       const shapes = marker ? [{
         type: "line",
@@ -2987,24 +3219,30 @@
       const yMin = Math.min(...y);
       const yMax = Math.max(...y);
       const z = [];
+      const customdata = [];
       for (let r = 0; r < rows; r++) {
         const row = [];
+        const customRow = [];
+        const apix = n.nominalApix * n.freqs[start + r] * n.targetResolution;
         for (let t = 0; t < cols; t++) {
           let v = n.pwr2d[t * n.rSamples + start + r];
           if (el.nufftLogY.checked) v = Math.log1p(Math.abs(v));
           row.push(v);
+          customRow.push(apix);
         }
         z.push(row);
+        customdata.push(customRow);
       }
       const traces = [{
         type: "heatmap",
         x,
         y,
         z,
+        customdata,
         colorscale: "Viridis",
         zsmooth: false,
         colorbar: { title: el.nufftLogY.checked ? "Log intensity" : "Intensity" },
-        hovertemplate: "Angle: %{x:.1f} deg<br>Frequency: %{y:.6f} 1/A<br>Intensity: %{z:.4f}<extra></extra>"
+        hovertemplate: "Angle: %{x:.1f} deg<br>Spatial Frequency: %{y:.6f} 1/A<br>Calibrated pixel size: %{customdata:.4f} A/px<extra></extra>"
       }];
       const layout = plotlyLayout(
         `Focused Heatmap: +/-10 radial samples around ${freq.toFixed(6)} 1/A`,
@@ -3075,20 +3313,31 @@
       const y = clamp(Math.floor(p.y), 0, img.displayHeight - 1);
       const ox = clamp(Math.floor(x * img.scaleX), 0, img.width - 1);
       const oy = clamp(Math.floor(y * img.scaleY), 0, img.height - 1);
-      const raw = img.data[oy * img.width + ox];
-      const shown = img.display8[y * img.displayWidth + x];
       const s = normalizedSelection();
       const selW = Math.abs(s.x1 - s.x0) * img.scaleX;
       const selH = Math.abs(s.y1 - s.y0) * img.scaleY;
       showCrosshair(el.imageCanvas, event);
       showHoverTip(event, [
-        "Image",
-        `Display: x ${x}, y ${y}`,
         `Original: x ${ox}, y ${oy}`,
-        `Intensity: ${fmt(raw, 4)}  |  Display: ${shown}`,
         `Selection: ${fmt(selW, 0)} x ${fmt(selH, 0)} px`,
-        state.drag ? "Release to calculate FFT" : "Drag to select a region"
+        state.drag ? "Release to calculate FFT" : "Drag to select region",
+        "Double click to select center"
       ]);
+    }
+
+    function fftMagnifierHtml(fft, centerX, centerY) {
+      const cells = [];
+      for (let yy = centerY - 2; yy <= centerY + 2; yy++) {
+        for (let xx = centerX - 2; xx <= centerX + 2; xx++) {
+          const inBounds = xx >= 0 && xx < fft.n && yy >= 0 && yy < fft.n;
+          const value = inBounds ? fft.display[yy * fft.n + xx] : 0;
+          const shade = clamp(Math.round(value), 0, 255);
+          const klass = xx === centerX && yy === centerY ? "fft-magnifier-cell center" : "fft-magnifier-cell";
+          const opacity = inBounds ? "1" : "0.35";
+          cells.push(`<span class="${klass}" style="background: rgb(${shade}, ${shade}, ${shade}); opacity: ${opacity}"></span>`);
+        }
+      }
+      return `<div class="fft-magnifier" aria-hidden="true">${cells.join("")}</div>`;
     }
 
     function hoverFft(event) {
@@ -3103,18 +3352,15 @@
       const dx = x - fft.n / 2;
       const dy = y - fft.n / 2;
       const radius = Math.hypot(dx, dy);
-      const mag = fft.mag[y * fft.n + x];
-      const shown = fft.display[y * fft.n + x];
+      const nominal = Number(el.nominalApix.value) || 1;
+      const spatialFreq = radius / (fft.n * nominal);
       const apix = radius > 0 ? radius * getResolution() / fft.n : 0;
       showCrosshair(el.fftCanvas, event);
-      showHoverTip(event, [
-        "2D Spectrum",
-        `x ${x}, y ${y}  |  dx ${fmt(dx, 1)}, dy ${fmt(dy, 1)}`,
-        `Radius: ${fmt(radius, 2)} px`,
-        `Magnitude: ${fmt(mag, 4)}  |  Display: ${shown}`,
-        `Pixel size at radius: ${fmt(apix, 4)} A/px`,
-        "Drag a box to zoom, Shift-drag to pan, click to add/remove peak"
-      ]);
+      showFftHoverTip(event, [
+        `Frequency: ${fmt(spatialFreq, 6)} 1/A`,
+        `Pixel Size: ${fmt(apix, 4)} A/px`,
+        "Drag zoom; Shift-pan; click peak"
+      ], fftMagnifierHtml(fft, x, y));
     }
 
     function redrawInteractivePlots() {
@@ -3186,10 +3432,11 @@
 
     function boxZoomPlot(kind, start, end) {
       if (kind !== "fft") return false;
-      const left = Math.min(start.x, end.x);
-      const right = Math.max(start.x, end.x);
-      const top = Math.min(start.y, end.y);
-      const bottom = Math.max(start.y, end.y);
+      const box = constrainedSquareZoomBox(el.fftCanvas, start, end);
+      const left = box.dataLeft;
+      const right = box.dataRight;
+      const top = box.dataTop;
+      const bottom = box.dataBottom;
       if (right - left < 10 || bottom - top < 10) return false;
       const fft = state.fft;
       if (!fft) return false;
@@ -3203,7 +3450,7 @@
         yMax: Math.max(p0.y, p1.y)
       };
       drawFft();
-      setStatus("2D spectrum zoomed to selected box.");
+      setStatus("2D spectrum zoomed to selected square.");
       return true;
     }
 
@@ -3242,7 +3489,7 @@
             panPlot(kind, dx, dy);
             drag.last = p;
           } else if (drag.mode === "box" && drag.moved) {
-            showZoomBox(canvas, drag.start, p);
+            showZoomBox(canvas, drag.start, p, kind === "fft");
           }
         });
         const endDrag = (event) => {
@@ -3462,7 +3709,8 @@
         ["#apixExact", "Exact Pixel Size", "Type an exact A/px value to set the result directly."],
         ["#apixSetBtn", "Set Pixel Size", "Apply the exact value in the input field."],
         ["#addToTableBtn", "Add Result", "Store the current file, region, and pixel-size result in the statistics table."],
-        ["#deleteSelectedBtn", "Delete Selected", "Remove the selected statistics row."],
+        ["#removeCurrentRowBtn", "Remove Row", "Delete the currently loaded measurement row without scrolling to the table controls."],
+        ["#deleteSelectedBtn", "Delete Selected", "Remove the selected statistics row or rows."],
         ["#clearTableBtn", "Clear Table", "Remove all accumulated statistics rows."],
         ["#downloadCsvBtn", "Download Results", "Choose a filename prefix and save the measurements CSV, grouped statistics CSV, and statistics plot PNG."],
         ["#layoutSplitter", "Resize Panes", "Drag this divider to give more room to the image or analysis pane."],
@@ -3810,6 +4058,7 @@
       if (type === "image") {
         showHoverPreview(event, "Original Image", row.imagePreview, [
           row.filename,
+          `Specimen: ${rowSpecimenInfo(row).label}`,
           row.regionLocation,
           "Blue outline marks the saved region"
         ]);
@@ -3817,6 +4066,7 @@
       }
       if (type === "region") {
         showHoverPreview(event, "Region Preview", row.regionPreview, [
+          `Specimen: ${rowSpecimenInfo(row).label}`,
           row.regionSize,
           row.regionLocation,
           row.filename
@@ -3831,6 +4081,7 @@
       }
       const peakLine = row.radialPeakFreq == null ? "Peak frequency: n/a" : `Peak frequency: ${fmt(row.radialPeakFreq, 6)} 1/A`;
       showHoverPreview(event, "1D Radial Peak", row.measurementPreview || row.radialPreview, [
+        `Specimen: ${rowSpecimenInfo(row).label}`,
         `Pixel size: ${row.pixelSize.toFixed(4)} A/px`,
         peakLine,
         `Nominal: ${row.nominal.toFixed(4)} A/px`
@@ -3852,6 +4103,7 @@
         includeRegionPreview = includePreviews,
         includeMeasurementPreview = includePreviews,
         previewMode = null,
+        sourceMode = "manual",
         replaceIndex = null,
         quiet = false
       } = options;
@@ -3863,11 +4115,23 @@
       const nominal = Number(el.nominalApix.value) || 1;
       const loc = state.region.location;
       const savedSelection = state.region.displaySelection || normalizedSelection();
+      const specimen = currentSpecimenInfo();
       const useFftPreview = previewMode ? previewMode === "fft" : activeAnalysisTab() === "spectrumPanel";
+      const canReplace = Number.isInteger(replaceIndex) && replaceIndex >= 0 && replaceIndex < state.tableRows.length;
+      const previousRow = canReplace ? state.tableRows[replaceIndex] : null;
+      const rowSourceMode = previousRow
+        ? (["auto", "auto_edited"].includes(previousRow.sourceMode) ? "auto_edited" : "manual")
+        : sourceMode;
       const row = {
         filename: state.image.filename,
         sourceKey: state.image.sourceKey || "",
+        sourceMode: rowSourceMode,
         selection: { ...savedSelection },
+        specimen: specimen.label,
+        specimenShort: specimen.short,
+        specimenType: specimen.type,
+        specimenResolution: specimen.resolution,
+        customResolution: Number(el.customResolution.value) || specimen.resolution,
         regionSize: `${state.region.size}x${state.region.size} px`,
         regionLocation: `x:${loc.x0}-${loc.x1}, y:${loc.y0}-${loc.y1}`,
         pixelSize: apix,
@@ -3904,13 +4168,15 @@
           el.addToTableBtn.disabled = wasDisabled;
         }
       }
-      const canReplace = Number.isInteger(replaceIndex) && replaceIndex >= 0 && replaceIndex < state.tableRows.length;
       if (canReplace) {
         state.tableRows[replaceIndex] = row;
-        state.selectedTableRow = replaceIndex;
-        state.editingTableRow = replaceIndex;
+        state.selectedTableRows.clear();
+        state.selectedTableRow = null;
+        state.editingTableRow = null;
       } else {
         state.tableRows.push(row);
+        state.selectedTableRows.clear();
+        state.selectedTableRow = null;
         state.editingTableRow = null;
       }
       updateAverages();
@@ -3948,13 +4214,28 @@
     function groupedStatistics(rows = state.tableRows) {
       const groups = new Map();
       for (const row of rows) {
-        const key = row.nominal.toFixed(4);
-        if (!groups.has(key)) groups.set(key, { nominal: row.nominal, values: [] });
+        const specimen = rowSpecimenInfo(row);
+        const key = groupKeyForRow(row);
+        if (!groups.has(key)) {
+          groups.set(key, {
+            nominal: row.nominal,
+            specimen: specimen.label,
+            specimenShort: specimen.short,
+            specimenResolution: specimen.resolution,
+            values: []
+          });
+        }
         groups.get(key).values.push(row.pixelSize);
       }
       return Array.from(groups.values())
-        .sort((a, b) => a.nominal - b.nominal)
-        .map((group) => ({ nominal: group.nominal, ...summarizeValues(group.values) }));
+        .sort((a, b) => a.nominal - b.nominal || a.specimenShort.localeCompare(b.specimenShort))
+        .map((group) => ({
+          nominal: group.nominal,
+          specimen: group.specimen,
+          specimenShort: group.specimenShort,
+          specimenResolution: group.specimenResolution,
+          ...summarizeValues(group.values)
+        }));
     }
 
     function renderStatsSummary() {
@@ -3964,6 +4245,7 @@
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${stats.nominal.toFixed(4)}</td>
+          <td>${escapeHtml(stats.specimenShort || stats.specimen || "Specimen")}</td>
           <td>${stats.n}</td>
           <td>${stats.mean.toFixed(4)}</td>
           <td>${stats.median.toFixed(4)}</td>
@@ -3978,12 +4260,152 @@
 
     function updateAverages() {
       state.statsGroups = groupedStatistics();
-      const groups = new Map(state.statsGroups.map((stats) => [stats.nominal.toFixed(4), stats]));
+      const groups = new Map(state.statsGroups.map((stats) => [`${stats.nominal.toFixed(4)}|${stats.specimenShort}`, stats]));
       for (const row of state.tableRows) {
-        const stats = groups.get(row.nominal.toFixed(4));
+        const stats = groups.get(groupKeyForRow(row));
         row.average = `mean ${stats.mean.toFixed(4)} | median ${stats.median.toFixed(4)} | SD ${stats.std.toFixed(4)}`;
       }
       renderStatsSummary();
+    }
+
+    function rowDelta(row) {
+      return row.pixelSize - row.nominal;
+    }
+
+    function regionArea(row) {
+      const match = String(row.regionSize || "").match(/(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/);
+      if (!match) return 0;
+      return Number(match[1]) * Number(match[2]);
+    }
+
+    function quantile(sortedValues, q) {
+      if (!sortedValues.length) return 0;
+      const pos = (sortedValues.length - 1) * q;
+      const lo = Math.floor(pos);
+      const hi = Math.ceil(pos);
+      if (lo === hi) return sortedValues[lo];
+      return sortedValues[lo] + (sortedValues[hi] - sortedValues[lo]) * (pos - lo);
+    }
+
+    function rowOutlierIndexes(rows = state.tableRows) {
+      const outliers = new Set();
+      const groups = new Map();
+      rows.forEach((row, idx) => {
+        const key = groupKeyForRow(row);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ idx, delta: rowDelta(row) });
+      });
+      for (const entries of groups.values()) {
+        if (entries.length < 4) continue;
+        const values = entries.map((entry) => entry.delta).sort((a, b) => a - b);
+        const q1 = quantile(values, 0.25);
+        const q3 = quantile(values, 0.75);
+        const iqr = q3 - q1;
+        if (!Number.isFinite(iqr) || iqr <= 0) continue;
+        const lo = q1 - 1.5 * iqr;
+        const hi = q3 + 1.5 * iqr;
+        entries.forEach((entry) => {
+          if (entry.delta < lo || entry.delta > hi) outliers.add(entry.idx);
+        });
+      }
+      return outliers;
+    }
+
+    function measurementSourceLabel(row) {
+      switch (row.sourceMode) {
+        case "auto": return "Autosample";
+        case "auto_edited": return "Autosample, manually edited";
+        case "manual":
+        default: return "Manual";
+      }
+    }
+
+    function measurementRowClass(row, idx, outlierIndexes) {
+      if (row.sourceMode === "auto_edited") return "measurement-row-auto-edited";
+      if (row.sourceMode === "auto" && outlierIndexes.has(idx)) return "measurement-row-auto-outlier";
+      if (row.sourceMode === "auto") return "measurement-row-auto";
+      return "measurement-row-manual";
+    }
+
+    function isTableRowSelected(idx) {
+      return state.selectedTableRows.has(idx) || idx === state.selectedTableRow;
+    }
+
+    function selectedRowIndexes() {
+      const indexes = state.selectedTableRows.size ? Array.from(state.selectedTableRows) : [];
+      if (!indexes.length && Number.isInteger(state.selectedTableRow)) indexes.push(state.selectedTableRow);
+      return Array.from(new Set(indexes))
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < state.tableRows.length)
+        .sort((a, b) => a - b);
+    }
+
+    function clearTableSelection() {
+      state.selectedTableRows.clear();
+      state.selectedTableRow = null;
+      state.editingTableRow = null;
+      updateTableActionButton();
+    }
+
+    function removeTableRows(indexes, quiet = false) {
+      const unique = Array.from(new Set(indexes))
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < state.tableRows.length)
+        .sort((a, b) => b - a);
+      if (!unique.length) return;
+      unique.forEach((idx) => state.tableRows.splice(idx, 1));
+      clearTableSelection();
+      updateAverages();
+      renderTable();
+      drawStatsPlot();
+      if (!quiet) {
+        const count = unique.length;
+        setStatus(`Removed ${count} measurement row${count === 1 ? "" : "s"}.`);
+      }
+    }
+
+    function sortedTableEntries() {
+      const entries = state.tableRows.map((row, idx) => ({ row, idx }));
+      const { key, direction } = state.tableSort;
+      if (!key) return entries;
+      const sign = direction === "desc" ? -1 : 1;
+      const valueFor = (entry) => {
+        if (key === "filename") return String(entry.row.filename || "").toLowerCase();
+        if (key === "regionSize") return regionArea(entry.row);
+        if (key === "delta") return rowDelta(entry.row);
+        return entry.idx;
+      };
+      return entries.sort((a, b) => {
+        const av = valueFor(a);
+        const bv = valueFor(b);
+        if (typeof av === "string" || typeof bv === "string") {
+          const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+          return cmp ? cmp * sign : (a.idx - b.idx);
+        }
+        return av === bv ? (a.idx - b.idx) : (av - bv) * sign;
+      });
+    }
+
+    function updateTableSortIndicators() {
+      document.querySelectorAll(".sortable-header").forEach((header) => {
+        const active = header.dataset.sortKey === state.tableSort.key;
+        header.classList.toggle("sorted-asc", active && state.tableSort.direction === "asc");
+        header.classList.toggle("sorted-desc", active && state.tableSort.direction === "desc");
+      });
+    }
+
+    function setupMeasurementTableSorting() {
+      document.querySelectorAll(".sortable-header").forEach((header) => {
+        header.addEventListener("click", () => {
+          const key = header.dataset.sortKey;
+          if (!key) return;
+          if (state.tableSort.key === key) {
+            state.tableSort.direction = state.tableSort.direction === "asc" ? "desc" : "asc";
+          } else {
+            state.tableSort = { key, direction: "asc" };
+          }
+          renderTable();
+        });
+      });
+      updateTableSortIndicators();
     }
 
     function updateTableActionButton() {
@@ -3991,12 +4413,15 @@
         state.editingTableRow >= 0 &&
         state.editingTableRow < state.tableRows.length;
       el.addToTableBtn.textContent = editing ? "Update Row" : "Add to Table";
+      el.removeCurrentRowBtn.classList.toggle("hidden", !editing);
+      el.removeCurrentRowBtn.disabled = !editing;
     }
 
     async function restoreTableRow(idx) {
       const row = state.tableRows[idx];
       if (!row) return;
       state.selectedTableRow = idx;
+      state.selectedTableRows = new Set([idx]);
       state.editingTableRow = idx;
       renderTable();
       drawStatsPlot();
@@ -4016,6 +4441,7 @@
             keepTableEdit: true
           });
         }
+        applyRowCalibrationSettings(row);
         if (row.selection) {
           state.selection = { ...row.selection };
           drawImage();
@@ -4049,16 +4475,21 @@
       if (state.hoveredTableRow !== null && state.hoveredTableRow >= state.tableRows.length) {
         state.hoveredTableRow = null;
       }
-      state.tableRows.forEach((row, idx) => {
+      const outlierIndexes = rowOutlierIndexes();
+      sortedTableEntries().forEach(({ row, idx }) => {
         const tr = document.createElement("tr");
-        if (idx === state.selectedTableRow) tr.classList.add("selected");
+        tr.dataset.rowIndex = String(idx);
+        tr.classList.add(measurementRowClass(row, idx, outlierIndexes));
+        if (isTableRowSelected(idx)) tr.classList.add("selected");
         if (idx === state.hoveredTableRow) tr.classList.add("hovered");
         tr.innerHTML = `
           <td data-preview="image">${escapeHtml(row.filename)}</td>
+          <td>${escapeHtml(rowSpecimenInfo(row).short)}</td>
           <td data-preview="region">${row.regionSize}</td>
           <td data-preview="region">${row.regionLocation}</td>
           <td data-preview="radial">${row.pixelSize.toFixed(4)}</td>
           <td>${row.nominal.toFixed(4)}</td>
+          <td>${rowDelta(row).toFixed(4)}</td>
           <td>${row.average}</td>
         `;
         tr.querySelectorAll('[data-preview="image"]').forEach((cell) => bindTablePreview(cell, row, "image"));
@@ -4069,6 +4500,7 @@
         });
         el.regionTable.appendChild(tr);
       });
+      updateTableSortIndicators();
       updateTableActionButton();
     }
 
@@ -4079,11 +4511,10 @@
     function highlightStatsTableRow(idx) {
       if (!Number.isInteger(idx) || idx < 0 || idx >= state.tableRows.length) return;
       state.hoveredTableRow = idx;
-      const rows = Array.from(el.regionTable.querySelectorAll("tr"));
-      rows.forEach((row, rowIdx) => {
-        row.classList.toggle("hovered", rowIdx === idx);
+      el.regionTable.querySelectorAll("tr").forEach((row) => {
+        row.classList.toggle("hovered", Number(row.dataset.rowIndex) === idx);
       });
-      rows[idx]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      el.regionTable.querySelector(`tr[data-row-index="${idx}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
 
     function clearStatsTableHover() {
@@ -4091,103 +4522,107 @@
       el.regionTable.querySelectorAll("tr.hovered").forEach((row) => row.classList.remove("hovered"));
     }
 
+    function scrollFirstSelectedRowIntoView() {
+      const firstIdx = selectedRowIndexes()[0];
+      if (!Number.isInteger(firstIdx)) return;
+      el.regionTable.querySelector(`tr[data-row-index="${firstIdx}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+
     function drawStatsPlot() {
       state.statsPlot = null;
       if (!state.tableRows.length) {
         clearStatsTableHover();
-        emptyPlot(el.statsPlot, "Pixel Size Centered by Nominal Value", "No table data yet.");
+        emptyPlot(el.statsPlot, "Pixel Size Distribution by Specimen", "No table data yet.");
         return;
       }
       ensurePlotly();
       const summaries = state.statsGroups.length ? state.statsGroups : groupedStatistics();
-      const nominals = summaries.map((stats) => stats.nominal);
-      const points = state.tableRows.map((r, idx) => ({ x: r.nominal, y: r.pixelSize - r.nominal, idx, row: r }));
-      const means = summaries.map((stats) => ({ x: stats.nominal, y: stats.mean - stats.nominal, stats }));
-      const medians = summaries.map((stats) => ({ x: stats.nominal, y: stats.median - stats.nominal, stats }));
-      const traces = [
-        {
-          type: "scatter",
-          mode: "markers",
-          name: "Regions",
-          x: points.map((p) => p.x),
-          y: points.map((p) => p.y),
-          customdata: points.map((p) => [p.idx, p.row.filename, p.row.pixelSize, p.row.nominal]),
+      const nominalLabels = Array.from(new Set(
+        state.tableRows.map((row) => row.nominal.toFixed(2))
+      )).sort((a, b) => Number(b) - Number(a));
+      const specimenKeys = Array.from(new Set(
+        state.tableRows.map((row) => rowSpecimenInfo(row).short)
+      )).sort();
+      const colorBySpecimen = new Map(specimenKeys.map((key, idx) => [key, SPECIMEN_COLORS[idx % SPECIMEN_COLORS.length]]));
+      const traces = specimenKeys.map((specimenKey) => {
+        const rows = state.tableRows
+          .map((row, idx) => ({ row, idx, specimen: rowSpecimenInfo(row) }))
+          .filter((entry) => entry.specimen.short === specimenKey);
+        const color = colorBySpecimen.get(specimenKey);
+        const selectedPointIndexes = rows
+          .map((entry, pointIdx) => isTableRowSelected(entry.idx) ? pointIdx : -1)
+          .filter((pointIdx) => pointIdx >= 0);
+        return {
+          type: "box",
+          name: specimenKey,
+          x: rows.map((entry) => entry.row.nominal.toFixed(2)),
+          y: rows.map((entry) => entry.row.pixelSize - entry.row.nominal),
+          customdata: rows.map((entry) => [
+            entry.idx,
+            entry.row.filename,
+            entry.row.pixelSize,
+            entry.row.nominal,
+            entry.specimen.label,
+            entry.row.average || "",
+            measurementSourceLabel(entry.row)
+          ]),
+          ...(selectedPointIndexes.length ? { selectedpoints: selectedPointIndexes } : {}),
+          selected: { marker: { color: "#d83a52", opacity: 1, size: 9 } },
+          unselected: { marker: { opacity: 0.78 } },
+          boxpoints: "all",
+          jitter: 0.28,
+          pointpos: 0,
           marker: {
-            size: 9,
-            color: points.map((p) => p.idx === state.selectedTableRow ? "#d83a52" : "#7dd3fc"),
-            line: { color: "#2563eb", width: 1 }
+            color,
+            size: 7,
+            opacity: 0.86,
+            line: { color: "rgba(15, 23, 42, 0.55)", width: 0.8 }
           },
-          hovertemplate: "File: %{customdata[1]}<br>Nominal: %{customdata[3]:.4f} A/px<br>Measured: %{customdata[2]:.4f} A/px<br>Delta: %{y:.4f} A/px<extra></extra>"
-        },
-        {
-          type: "scatter",
-          mode: "markers",
-          name: "Mean",
-          x: means.map((p) => p.x),
-          y: means.map((p) => p.y),
-          customdata: means.map((p) => [p.stats.n, p.stats.mean, p.stats.std]),
-          marker: { size: 11, color: "#2563eb", symbol: "diamond" },
-          error_y: {
-            type: "data",
-            array: means.map((p) => p.stats.std),
-            visible: true,
-            color: "rgba(37, 99, 235, 0.55)",
-            thickness: 1.2,
-            width: 4
-          },
-          hovertemplate: "Nominal: %{x:.4f} A/px<br>Mean pixel size: %{customdata[1]:.4f} A/px<br>Mean delta: %{y:.4f} A/px<br>Std dev: %{customdata[2]:.4f}<br>N: %{customdata[0]}<extra></extra>"
-        },
-        {
-          type: "scatter",
-          mode: "markers",
-          name: "Median",
-          x: medians.map((p) => p.x),
-          y: medians.map((p) => p.y),
-          customdata: medians.map((p) => [p.stats.n, p.stats.median, p.stats.mad]),
-          marker: { size: 10, color: "#0f9f6e", symbol: "square" },
-          hovertemplate: "Nominal: %{x:.4f} A/px<br>Median pixel size: %{customdata[1]:.4f} A/px<br>Median delta: %{y:.4f} A/px<br>MAD: %{customdata[2]:.4f}<br>N: %{customdata[0]}<extra></extra>"
-        }
-      ];
+          line: { color: "rgba(15, 23, 42, 0.58)", width: 1.2 },
+          fillcolor: color,
+          opacity: 0.72,
+          hovertemplate:
+            "Specimen: %{customdata[4]}<br>" +
+            "Measured: %{customdata[2]:.4f} A/px<extra></extra>"
+        };
+      });
       const yVals = [
-        ...points.map((p) => p.y),
-        ...summaries.flatMap((stats) => [
-          stats.mean - stats.nominal,
-          stats.median - stats.nominal,
-          stats.min - stats.nominal,
-          stats.max - stats.nominal
-        ]),
+        ...state.tableRows.map((row) => row.pixelSize - row.nominal),
+        ...summaries.flatMap((stats) => [stats.mean - stats.nominal, stats.min - stats.nominal, stats.max - stats.nominal]),
         0
       ];
       const yMin = Math.min(...yVals);
       const yMax = Math.max(...yVals);
-      const pad = Math.max(0.005, (yMax - yMin) * 0.18);
-      const xVals = nominals.length ? nominals : [0, 1];
-      const xMin = Math.min(...xVals);
-      const xMax = Math.max(...xVals);
-      const xPad = Math.max(0.02, (xMax - xMin || 0.1) * 0.18);
+      const pad = Math.max(0.003, (yMax - yMin || 0.01) * 0.24);
       const layout = plotlyLayout(
-        "Pixel Size Centered by Nominal Value",
+        "Pixel Size Distribution by Specimen",
         "Nominal Pixel Size (A/px)",
         "Pixel Size - Nominal (A/px)",
         {
           titleFontSize: 15,
           font: { color: PLOT_TEXT, family: "Inter, system-ui, sans-serif", size: 12 },
-          uirevision: `stats-${state.tableRows.length}`,
+          uirevision: `stats-${state.tableRows.length}-${specimenKeys.join("-")}`,
+          dragmode: "select",
+          selectdirection: "any",
           showlegend: true,
-          legend: { orientation: "h", x: 1, xanchor: "right", y: 1.12, font: { size: 11 } },
+          legend: { title: { text: "Specimen" }, orientation: "v", x: 1, xanchor: "right", y: 1, font: { size: 12 } },
+          boxmode: "group",
           shapes: [{
             type: "line",
-            x0: xMin - xPad,
-            x1: xMax + xPad,
+            xref: "paper",
+            x0: 0,
+            x1: 1,
             y0: 0,
             y1: 0,
-            line: { color: "#d83a52", width: 2 }
+            line: { color: "rgba(15, 23, 42, 0.46)", width: 1.6, dash: "dash" }
           }],
           xaxis: {
             ...plotlyLayout("", "", "").xaxis,
             title: { text: "Nominal Pixel Size (A/px)", font: { size: 12 } },
             tickfont: { size: 11 },
-            range: [xMin - xPad, xMax + xPad]
+            type: "category",
+            categoryorder: "array",
+            categoryarray: nominalLabels
           },
           yaxis: {
             ...plotlyLayout("", "", "").yaxis,
@@ -4197,17 +4632,36 @@
           }
         }
       );
-      Plotly.react(el.statsPlot, traces, layout, PLOTLY_CONFIG);
-      state.statsPlot = { nominals, points, means, medians, summaries };
+      Plotly.react(el.statsPlot, traces, layout, STATS_PLOTLY_CONFIG);
+      state.statsPlot = { nominalLabels, specimenKeys, summaries };
       if (!state.plotlyBound.stats) {
-        el.statsPlot.on("plotly_click", (event) => {
+        el.statsPlot.on("plotly_click", async (event) => {
           const point = event.points && event.points[0];
           if (!point || !point.customdata) return;
-          state.selectedTableRow = point.customdata[0];
+          const idx = point.customdata[0];
+          if (!Number.isInteger(idx)) return;
+          await restoreTableRow(idx);
+        });
+        el.statsPlot.on("plotly_selected", (event) => {
+          const indexes = new Set();
+          ((event && event.points) || []).forEach((point) => {
+            const idx = point.customdata && point.customdata[0];
+            if (Number.isInteger(idx)) indexes.add(idx);
+          });
+          state.selectedTableRows = indexes;
+          state.selectedTableRow = indexes.size === 1 ? Array.from(indexes)[0] : null;
           state.editingTableRow = null;
           renderTable();
+          scrollFirstSelectedRowIntoView();
           drawStatsPlot();
-          setStatus(`Selected table row ${state.selectedTableRow + 1} from statistics plot.`);
+          const count = indexes.size;
+          setStatus(count ? `Selected ${count} measurement row${count === 1 ? "" : "s"} from the statistics plot.` : "No measurements were selected.");
+        });
+        el.statsPlot.on("plotly_deselect", () => {
+          clearTableSelection();
+          renderTable();
+          drawStatsPlot();
+          setStatus("Cleared statistics plot selection.");
         });
         el.statsPlot.on("plotly_hover", (event) => {
           const point = event.points && event.points[0];
@@ -4298,23 +4752,33 @@
       const groups = state.statsGroups.length ? state.statsGroups : groupedStatistics();
       const measurementsHeader = [
         "Filename",
+        "Specimen",
+        "Specimen Resolution",
         "Region Size",
         "Region Location",
         "Pixel Size",
         "Nominal",
+        "Delta Pixel Size",
+        "Source",
         "Group Statistics"
       ];
       const measurementRows = state.tableRows.map((r) => [
         r.filename,
+        rowSpecimenInfo(r).label,
+        rowSpecimenInfo(r).resolution || "",
         r.regionSize,
         r.regionLocation,
         r.pixelSize.toFixed(4),
         r.nominal.toFixed(4),
+        rowDelta(r).toFixed(4),
+        measurementSourceLabel(r),
         r.average || ""
       ]);
-      const statisticsHeader = ["Nominal", "N", "Mean", "Median", "Std Dev", "MAD", "Min", "Max"];
+      const statisticsHeader = ["Nominal", "Specimen", "Specimen Resolution", "N", "Mean", "Median", "Std Dev", "MAD", "Min", "Max"];
       const statisticsRows = groups.map((stats) => [
         stats.nominal.toFixed(4),
+        stats.specimen || stats.specimenShort,
+        stats.specimenResolution || "",
         stats.n,
         stats.mean.toFixed(4),
         stats.median.toFixed(4),
@@ -4497,6 +4961,7 @@
               includePreviews: false,
               includeRegionPreview: true,
               previewMode: "radial",
+              sourceMode: "auto",
               quiet: true
             });
             added += 1;
@@ -4623,19 +5088,17 @@
       el.detectPeaksBtn.addEventListener("click", () => detectPeaks(false));
       el.clearOverlayBtn.addEventListener("click", clearOverlay);
       el.addToTableBtn.addEventListener("click", () => addTableRow({ replaceIndex: state.editingTableRow }));
+      el.removeCurrentRowBtn.addEventListener("click", () => {
+        const idx = state.editingTableRow;
+        if (!Number.isInteger(idx)) return;
+        removeTableRows([idx]);
+      });
       el.deleteSelectedBtn.addEventListener("click", () => {
-        if (state.selectedTableRow == null) return;
-        state.tableRows.splice(state.selectedTableRow, 1);
-        state.selectedTableRow = null;
-        state.editingTableRow = null;
-        updateAverages();
-        renderTable();
-        drawStatsPlot();
+        removeTableRows(selectedRowIndexes());
       });
       el.clearTableBtn.addEventListener("click", () => {
         state.tableRows = [];
-        state.selectedTableRow = null;
-        state.editingTableRow = null;
+        clearTableSelection();
         updateAverages();
         renderTable();
         drawStatsPlot();
@@ -4708,6 +5171,7 @@
       setupWorkspaceSplitter();
       setupStatsSplitter();
       setupCardExpansion();
+      setupMeasurementTableSorting();
       setupComponentTips();
       fitWorkspaceToViewport();
       setupResponsiveCanvases();
