@@ -47,7 +47,7 @@
       margin: 0;
       text-align: center;
       font-size: clamp(22px, 2.1vw, 30px);
-      font-weight: 760;
+      font-weight: 400;
       color: var(--text);
     }
 
@@ -455,6 +455,31 @@
 
     .upload-table-wrap[open] summary::after {
       content: "-";
+    }
+
+    .upload-table-wrap tbody tr {
+      cursor: pointer;
+    }
+
+    .upload-table-wrap tbody tr.upload-selected {
+      background: #eef4ff;
+    }
+
+    .upload-table-wrap tbody tr.upload-active {
+      outline: 2px solid rgba(37, 99, 235, 0.62);
+      outline-offset: -2px;
+    }
+
+    .upload-select-cell {
+      width: 38px;
+      text-align: center;
+    }
+
+    .upload-nominal-input {
+      width: 96px;
+      min-height: 30px;
+      padding: 4px 6px;
+      font-size: 12px;
     }
 
     .file-input-hidden {
@@ -1223,7 +1248,7 @@
             <details id="uploadTableWrap" class="table-wrap upload-table-wrap hidden" open>
               <summary id="uploadTableSummary">Uploaded files</summary>
               <table>
-                <thead><tr><th>File Name</th><th>Nominal Size</th></tr></thead>
+                <thead><tr><th>Use</th><th>File Name</th><th>Nominal (A/px)</th></tr></thead>
                 <tbody id="uploadTable"></tbody>
               </table>
             </details>
@@ -1480,7 +1505,10 @@
       image: null,
       imageCache: new Map(),
       uploads: [],
+      uploadNominals: [],
       selectedUpload: -1,
+      selectedUploadRows: new Set(),
+      uploadSelectionAnchor: null,
       selection: { x0: 250, x1: 800, y0: 250, y1: 800 },
       region: null,
       fft: null,
@@ -2259,6 +2287,7 @@
       const {
         autoCalculate = true,
         sourceKey = fallbackSourceKey(filename, decoded),
+        nominalOverride = null,
         keepTableEdit = false
       } = options;
       cacheDecodedImage(sourceKey, decoded, filename);
@@ -2281,7 +2310,9 @@
         scaleX: display.scaleX,
         scaleY: display.scaleY
       };
-      const nominal = parseNominal(filename);
+      const hasNominalOverride = nominalOverride !== null && nominalOverride !== undefined && nominalOverride !== "";
+      const explicitNominal = hasNominalOverride ? Number(nominalOverride) : NaN;
+      const nominal = Number.isFinite(explicitNominal) ? clamp(explicitNominal, 0.01, 10) : parseNominal(filename);
       el.nominalApix.value = nominal.toFixed(3);
       setApix(nominal);
       state.selection = defaultSelection(display.width, display.height);
@@ -3690,7 +3721,8 @@
         ["#autoSample", "Autosample", "When enabled, each uploaded image is split into sampled regions and automatically added to the statistics table."],
         ["#autoSampleN", "Autosample Regions", "Number of regions to sample per uploaded image. The 100% region size uses one full-image region."],
         ["#autoSampleSize", "Autosample Region Size", "Fraction of the image area covered by each automatically sampled region."],
-        ["#autoSampleStartBtn", "Start Autosampling", "Run autosampling for the uploaded files using the current region count and size settings."],
+        ["#autoSampleStartBtn", "Start Autosampling", "Run autosampling for the selected uploaded files using the current region count and size settings."],
+        ["#uploadTableWrap", "Uploaded Files", "Plain-click loads one file, Shift-click selects a range, and Cmd/Ctrl-click toggles files for autosampling. Nominal values are editable."],
         ["input[name=method]", "Input Method", "Switch between loading a remote URL and local files."],
         ["#nominalApix", "Nominal (A/px)", "Starting pixel size in A/px, often parsed from the filename."],
         ["#resolutionType", "Specimen", "Select the reference lattice spacing used to convert FFT radius into pixel size."],
@@ -4829,28 +4861,49 @@
 
     function isValidUrl(value) {
       try {
-        new URL(value);
-        return true;
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:";
       } catch {
         return false;
       }
     }
 
-    function scheduleUrlLoad(delay = 650) {
+    function scheduleUrlLoad(delay = 650, options = {}) {
+      const { force = false } = options;
       clearTimeout(state.urlLoadTimer);
       const url = el.downloadUrl.value.trim();
-      if (!url || !isValidUrl(url) || url === state.lastLoadedUrl) return;
       const token = ++state.urlLoadToken;
-      state.urlLoadTimer = setTimeout(() => loadUrl(false, token), delay);
+      if (!url) {
+        state.urlLoadTimer = setTimeout(() => setStatus("Paste an image URL to load."), delay);
+        return;
+      }
+      if (!isValidUrl(url)) {
+        state.urlLoadTimer = setTimeout(() => setStatus("URL is invalid. Paste a complete http(s) image URL."), delay);
+        return;
+      }
+      const currentUrlLoaded = state.image && state.image.sourceKey === urlSourceKey(url);
+      if (!force && url === state.lastLoadedUrl && currentUrlLoaded) {
+        state.urlLoadTimer = setTimeout(() => setStatus("URL image is already loaded."), delay);
+        return;
+      }
+      state.urlLoadTimer = setTimeout(() => loadUrl(force, token), delay);
     }
 
     async function loadUrl(force = false, scheduledToken = null) {
       const url = el.downloadUrl.value.trim();
-      if (!url || !isValidUrl(url)) {
-        if (url) setStatus("Paste a complete image URL to load it.");
+      if (!url) {
+        setStatus("Paste an image URL to load.");
         return;
       }
-      if (!force && url === state.lastLoadedUrl) return;
+      if (!isValidUrl(url)) {
+        setStatus("URL is invalid. Paste a complete http(s) image URL.");
+        return;
+      }
+      const currentUrlLoaded = state.image && state.image.sourceKey === urlSourceKey(url);
+      if (!force && url === state.lastLoadedUrl && currentUrlLoaded) {
+        setStatus("URL image is already loaded.");
+        return;
+      }
       const token = scheduledToken ?? ++state.urlLoadToken;
       try {
         setStatus(`Downloading ${url}...`);
@@ -4876,7 +4929,7 @@
       const controlsEnabled = enabled && !state.batchRunning;
       el.autoSampleN.disabled = !controlsEnabled;
       el.autoSampleSize.disabled = !controlsEnabled;
-      el.autoSampleStartBtn.disabled = !enabled || state.batchRunning || !state.uploads.length;
+      el.autoSampleStartBtn.disabled = !enabled || state.batchRunning || !selectedUploadIndexes().length;
       const sizePct = Number(el.autoSampleSize.value);
       let n = Math.round(Number(el.autoSampleN.value) || 4);
       n = clamp(n, 1, 100);
@@ -4890,6 +4943,48 @@
 
     function autoSampleCount() {
       return autoSampleFraction() >= 1 ? 1 : clamp(Math.round(Number(el.autoSampleN.value) || 4), 1, 100);
+    }
+
+    function uploadNominal(idx) {
+      const stored = Number(state.uploadNominals[idx]);
+      if (Number.isFinite(stored) && stored > 0) return clamp(stored, 0.01, 10);
+      const file = state.uploads[idx];
+      return file ? parseNominal(file.name) : 1.0;
+    }
+
+    function selectedUploadIndexes() {
+      return Array.from(state.selectedUploadRows)
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < state.uploads.length)
+        .sort((a, b) => a - b);
+    }
+
+    function setUploadNominal(idx, value, applyToActive = true) {
+      const numeric = clamp(Number(value), 0.01, 10);
+      if (!Number.isFinite(numeric)) return false;
+      state.uploadNominals[idx] = numeric;
+      if (applyToActive && idx === state.selectedUpload) {
+        el.nominalApix.value = numeric.toFixed(4);
+        setApix(numeric);
+        if (state.region) startNufft();
+      }
+      return true;
+    }
+
+    function applyUploadSelectionFromEvent(event, idx) {
+      if (event.shiftKey && Number.isInteger(state.uploadSelectionAnchor)) {
+        const lo = Math.min(state.uploadSelectionAnchor, idx);
+        const hi = Math.max(state.uploadSelectionAnchor, idx);
+        if (!(event.metaKey || event.ctrlKey)) state.selectedUploadRows.clear();
+        for (let i = lo; i <= hi; i++) state.selectedUploadRows.add(i);
+      } else if (event.metaKey || event.ctrlKey) {
+        if (state.selectedUploadRows.has(idx)) state.selectedUploadRows.delete(idx);
+        else state.selectedUploadRows.add(idx);
+        state.uploadSelectionAnchor = idx;
+      } else {
+        state.selectedUploadRows = new Set([idx]);
+        state.uploadSelectionAnchor = idx;
+      }
+      updateAutoSampleControls();
     }
 
     function autoSampleRegions(width, height, count, fraction) {
@@ -4922,6 +5017,12 @@
 
     async function runAutoSampleBatch() {
       if (state.batchRunning || !el.autoSample.checked || !state.uploads.length) return;
+      const uploadIndexes = selectedUploadIndexes();
+      if (!uploadIndexes.length) {
+        setStatus("Select one or more uploaded files to autosample.");
+        updateAutoSampleControls();
+        return;
+      }
       state.batchRunning = true;
       const originalDisabled = {
         fileInput: el.fileInput.disabled,
@@ -4937,14 +5038,19 @@
       el.autoSampleStartBtn.disabled = true;
       let added = 0;
       try {
-        for (let fileIdx = 0; fileIdx < state.uploads.length; fileIdx++) {
+        for (let batchIdx = 0; batchIdx < uploadIndexes.length; batchIdx++) {
+          const fileIdx = uploadIndexes[batchIdx];
           const file = state.uploads[fileIdx];
           state.selectedUpload = fileIdx;
           renderUploadTable();
-          setStatus(`Autosampling ${file.name} (${fileIdx + 1}/${state.uploads.length})...`);
+          setStatus(`Autosampling ${file.name} (${batchIdx + 1}/${uploadIndexes.length})...`);
           const buffer = await file.arrayBuffer();
           const decoded = await decodeImageBuffer(file.name, buffer, file.type);
-          setImage(decoded, file.name, { autoCalculate: false, sourceKey: uploadSourceKey(file, fileIdx) });
+          setImage(decoded, file.name, {
+            autoCalculate: false,
+            sourceKey: uploadSourceKey(file, fileIdx),
+            nominalOverride: uploadNominal(fileIdx)
+          });
           const regions = autoSampleRegions(
             state.image.displayWidth,
             state.image.displayHeight,
@@ -4984,7 +5090,10 @@
 
     async function handleFiles(files) {
       state.uploads = Array.from(files || []);
+      state.uploadNominals = state.uploads.map((file) => parseNominal(file.name));
       state.selectedUpload = state.uploads.length ? 0 : -1;
+      state.selectedUploadRows = new Set(state.uploads.map((_, idx) => idx));
+      state.uploadSelectionAnchor = state.uploads.length ? 0 : null;
       if (state.uploads.length) el.uploadTableWrap.open = true;
       renderUploadTable();
       updateAutoSampleControls();
@@ -4994,12 +5103,40 @@
 
     function renderUploadTable() {
       el.uploadTable.innerHTML = "";
-      el.uploadTableSummary.textContent = `Uploaded files (${state.uploads.length})`;
+      const selectedCount = selectedUploadIndexes().length;
+      el.uploadTableSummary.textContent = `Uploaded files (${state.uploads.length}; ${selectedCount} selected)`;
       state.uploads.forEach((file, idx) => {
         const tr = document.createElement("tr");
-        if (idx === state.selectedUpload) tr.classList.add("selected");
-        tr.innerHTML = `<td>${escapeHtml(file.name)}</td><td>${parseNominal(file.name).toFixed(3)}</td>`;
-        tr.addEventListener("click", () => loadUpload(idx));
+        const checked = state.selectedUploadRows.has(idx);
+        tr.classList.toggle("upload-selected", checked);
+        tr.classList.toggle("upload-active", idx === state.selectedUpload);
+        tr.innerHTML = `
+          <td class="upload-select-cell"><input type="checkbox" ${checked ? "checked" : ""} aria-label="Use ${escapeHtml(file.name)} for autosample"></td>
+          <td>${escapeHtml(file.name)}</td>
+          <td><input class="upload-nominal-input" type="number" min="0.01" max="10" step="0.0001" value="${uploadNominal(idx).toFixed(4)}" aria-label="Nominal pixel size for ${escapeHtml(file.name)}"></td>
+        `;
+        const checkbox = tr.querySelector('input[type="checkbox"]');
+        checkbox.addEventListener("click", (event) => event.stopPropagation());
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) state.selectedUploadRows.add(idx);
+          else state.selectedUploadRows.delete(idx);
+          state.uploadSelectionAnchor = idx;
+          renderUploadTable();
+          updateAutoSampleControls();
+        });
+        const nominalInput = tr.querySelector(".upload-nominal-input");
+        nominalInput.addEventListener("click", (event) => event.stopPropagation());
+        nominalInput.addEventListener("keydown", (event) => event.stopPropagation());
+        nominalInput.addEventListener("change", (event) => {
+          if (setUploadNominal(idx, event.target.value)) {
+            renderUploadTable();
+            updateAutoSampleControls();
+          }
+        });
+        tr.addEventListener("click", (event) => {
+          applyUploadSelectionFromEvent(event, idx);
+          loadUpload(idx);
+        });
         el.uploadTable.appendChild(tr);
       });
     }
@@ -5013,7 +5150,10 @@
         setStatus(`Reading ${file.name}...`);
         const buffer = await file.arrayBuffer();
         const decoded = await decodeImageBuffer(file.name, buffer, file.type);
-        setImage(decoded, file.name, { sourceKey: uploadSourceKey(file, idx) });
+        setImage(decoded, file.name, {
+          sourceKey: uploadSourceKey(file, idx),
+          nominalOverride: uploadNominal(idx)
+        });
       } catch (err) {
         console.error(err);
         setStatus(`Upload load failed: ${err.message}`);
@@ -5027,7 +5167,7 @@
           el.urlControls.classList.toggle("hidden", !isUrl);
           el.uploadControls.classList.toggle("hidden", isUrl);
           el.uploadTableWrap.classList.toggle("hidden", isUrl);
-          if (isUrl) scheduleUrlLoad(0);
+          if (isUrl) scheduleUrlLoad(0, { force: true });
         });
       });
       document.querySelectorAll(".tabs button").forEach((btn) => {
@@ -5054,7 +5194,12 @@
       });
       el.customResolution.addEventListener("change", () => state.region && calculateAll());
       el.nominalApix.addEventListener("change", () => {
-        setApix(Number(el.nominalApix.value) || 1);
+        const nominal = Number(el.nominalApix.value) || 1;
+        setApix(nominal);
+        if (document.querySelector("input[name=method]:checked")?.value === "upload" && state.selectedUpload >= 0) {
+          state.uploadNominals[state.selectedUpload] = clamp(nominal, 0.01, 10);
+          renderUploadTable();
+        }
         if (state.region) startNufft();
       });
       el.apixSlider.addEventListener("input", () => setApix(el.apixSlider.value, false));
