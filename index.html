@@ -656,6 +656,33 @@
       font-size: 12px;
     }
 
+    .tilt-output-lines {
+      display: grid;
+      gap: 3px;
+    }
+
+    .pixel-value-button {
+      min-height: 0;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      color: var(--blue);
+      background: transparent;
+      box-shadow: none;
+      font: inherit;
+      font-weight: 720;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      white-space: normal;
+    }
+
+    .pixel-value-button:hover:not(:disabled) {
+      color: var(--blue-dark);
+      background: transparent;
+      box-shadow: none;
+      transform: none;
+    }
+
     .result-card .card-body {
       display: flex;
       flex-direction: column;
@@ -2970,11 +2997,30 @@
       const tilt = calculateTilt(small, large);
       const apixAxis = useDetectConvention ? small : large;
       const untiltedApix = apixAxis * resolution / fft.n;
+      const originalApix = Math.sqrt(small * large) * resolution / fft.n;
       fft.shape = { type: "ellipse", a: fit.a, b: fit.b, theta: fit.theta };
-      fft.tilt = { small, large, tilt, untiltedApix, theta: fit.theta };
+      fft.tilt = { small, large, tilt, originalApix, untiltedApix, theta: fit.theta };
       fft.fitNote = "";
       if (untiltedApix >= 0.01 && untiltedApix <= 6) setApix(untiltedApix);
       drawFft();
+    }
+
+    function pixelSizeButtonHtml(value, label) {
+      if (!Number.isFinite(value)) return "n/a";
+      const display = `${value.toFixed(4)} A/px`;
+      return `<button type="button" class="pixel-value-button" data-apix-value="${value.toFixed(6)}" data-apix-label="${escapeHtml(label)}">${escapeHtml(display)}</button>`;
+    }
+
+    function tiltLine(text) {
+      return `<div>${escapeHtml(text)}</div>`;
+    }
+
+    function tiltHtmlLine(label, html) {
+      return `<div>${escapeHtml(label)} ${html}</div>`;
+    }
+
+    function renderTiltOutput(lines) {
+      el.tiltOutput.innerHTML = `<div class="tilt-output-lines">${lines.join("")}</div>`;
     }
 
     function updateTiltOutput() {
@@ -2984,21 +3030,28 @@
         return;
       }
       if (fft.tilt) {
-        el.tiltOutput.textContent =
-          `Ellipse fitted:\n` +
-          `Minor axis: ${fft.tilt.small.toFixed(2)} px\n` +
-          `Major axis: ${fft.tilt.large.toFixed(2)} px\n` +
-          `Tilt angle: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg\n` +
-          `Orientation: ${(fft.tilt.theta * 180 / Math.PI).toFixed(1)} deg\n` +
-          `Untilted pixel size: ${fft.tilt.untiltedApix.toFixed(4)} A/px`;
+        const originalApix = Number.isFinite(fft.tilt.originalApix)
+          ? fft.tilt.originalApix
+          : Math.sqrt(fft.tilt.small * fft.tilt.large) * getResolution() / fft.n;
+        renderTiltOutput([
+          tiltLine("Ellipse fitted:"),
+          tiltLine(`Minor axis: ${fft.tilt.small.toFixed(2)} px`),
+          tiltLine(`Major axis: ${fft.tilt.large.toFixed(2)} px`),
+          tiltLine(`Ellipse distortion angle: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg`),
+          tiltLine(`Orientation: ${(fft.tilt.theta * 180 / Math.PI).toFixed(1)} deg`),
+          tiltHtmlLine("Original pixel size:", pixelSizeButtonHtml(originalApix, "original pixel size")),
+          tiltHtmlLine("Ellipse-corrected pixel size:", pixelSizeButtonHtml(fft.tilt.untiltedApix, "ellipse-corrected pixel size"))
+        ]);
       } else if (fft.shape && fft.shape.type === "circle") {
         const apix = fft.shape.r * getResolution() / fft.n;
-        el.tiltOutput.textContent =
-          `Circle from latest peak:\n` +
-          `Peaks: ${fft.peaks.length}\n` +
-          `Radius: ${fft.shape.r.toFixed(2)} px\n` +
-          `Calculated pixel size: ${apix.toFixed(4)} A/px` +
-          (fft.fitNote ? `\n${fft.fitNote}` : "");
+        const lines = [
+          tiltLine("Circle from latest peak:"),
+          tiltLine(`Peaks: ${fft.peaks.length}`),
+          tiltLine(`Radius: ${fft.shape.r.toFixed(2)} px`),
+          tiltHtmlLine("Original pixel size:", pixelSizeButtonHtml(apix, "original pixel size"))
+        ];
+        if (fft.fitNote) lines.push(tiltLine(fft.fitNote));
+        renderTiltOutput(lines);
       }
     }
 
@@ -3744,7 +3797,7 @@
         ["#removeCurrentRowBtn", "Remove Row", "Delete the currently loaded measurement row without scrolling to the table controls."],
         ["#deleteSelectedBtn", "Delete Selected", "Remove the selected statistics row or rows."],
         ["#clearTableBtn", "Clear Table", "Remove all accumulated statistics rows."],
-        ["#downloadCsvBtn", "Download Results", "Choose a filename prefix and save the measurements CSV, grouped statistics CSV, and statistics plot PNG."],
+        ["#downloadCsvBtn", "Download Results", "Choose a filename prefix and save the measurements CSV, grouped statistics CSV, statistics plot PNG, and statistics panel PDF."],
         ["#layoutSplitter", "Resize Panes", "Drag this divider to give more room to the image or analysis pane."],
         ["#workspaceSplitter", "Resize Workspace", "Drag this divider to give more height to the image/FFT workspace or the statistics area."],
         [".plot-tool", "Plot Controls", "Use + and - to zoom, Reset to restore. Drag a box to zoom, Shift-drag to pan."],
@@ -4077,7 +4130,7 @@
       lines.push(`Peaks: ${fft.peaks.length}`);
       if (fft.tilt) {
         lines.push(`Ellipse: minor ${fmt(fft.tilt.small, 2)} px, major ${fmt(fft.tilt.large, 2)} px`);
-        lines.push(`Tilt: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg`);
+        lines.push(`Ellipse distortion angle: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg`);
       } else if (fft.shape && fft.shape.type === "circle") {
         lines.push(`Circle radius: ${fmt(fft.shape.r, 2)} px`);
       } else {
@@ -4748,6 +4801,156 @@
       return response.blob();
     }
 
+    function dataUrlToUint8Array(dataUrl) {
+      const base64 = dataUrl.split(",")[1] || "";
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
+    function imageFromDataUrl(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Could not render statistics plot for PDF."));
+        image.src = dataUrl;
+      });
+    }
+
+    function fitCanvasText(ctx, text, maxWidth) {
+      const value = String(text ?? "");
+      if (ctx.measureText(value).width <= maxWidth) return value;
+      let lo = 0;
+      let hi = value.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (ctx.measureText(`${value.slice(0, mid)}...`).width <= maxWidth) lo = mid;
+        else hi = mid - 1;
+      }
+      return `${value.slice(0, Math.max(0, lo))}...`;
+    }
+
+    async function makeStatisticsPanelPdfBlob(plotDataUrl, statisticsHeader, statisticsRows) {
+      const plotImage = await imageFromDataUrl(plotDataUrl);
+      const canvasWidth = 1280;
+      const margin = 56;
+      const plotWidth = canvasWidth - margin * 2;
+      const plotHeight = Math.round(plotWidth * plotImage.naturalHeight / Math.max(1, plotImage.naturalWidth));
+      const rowHeight = 34;
+      const titleHeight = 70;
+      const sectionGap = 30;
+      const tableHeaderHeight = rowHeight;
+      const tableHeight = tableHeaderHeight + Math.max(1, statisticsRows.length) * rowHeight;
+      const canvasHeight = titleHeight + plotHeight + sectionGap + 40 + tableHeight + margin;
+      const canvas = document.createElement("canvas");
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#17202a";
+      ctx.font = "600 30px Inter, Arial, sans-serif";
+      ctx.fillText("WebCalEM Statistics Panel", margin, 44);
+      ctx.font = "18px Inter, Arial, sans-serif";
+      ctx.fillStyle = "#687385";
+      ctx.fillText(`Generated ${new Date().toLocaleDateString()}`, margin, 68);
+
+      const plotY = titleHeight;
+      ctx.drawImage(plotImage, margin, plotY, plotWidth, plotHeight);
+
+      const tableY = plotY + plotHeight + sectionGap;
+      ctx.fillStyle = "#17202a";
+      ctx.font = "600 22px Inter, Arial, sans-serif";
+      ctx.fillText("Grouped Statistics", margin, tableY + 20);
+
+      const colWidths = [110, 96, 142, 50, 98, 98, 98, 88, 88, 88];
+      const tableLeft = margin;
+      const headerY = tableY + 38;
+      const tableWidth = colWidths.reduce((sum, width) => sum + width, 0);
+      ctx.strokeStyle = "#cdd6e3";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "#f3f6fb";
+      ctx.fillRect(tableLeft, headerY, tableWidth, tableHeaderHeight);
+      ctx.strokeRect(tableLeft, headerY, tableWidth, tableHeaderHeight);
+      ctx.font = "600 15px Inter, Arial, sans-serif";
+      ctx.fillStyle = "#233044";
+      let x = tableLeft;
+      statisticsHeader.forEach((label, idx) => {
+        const width = colWidths[idx] || 90;
+        ctx.fillText(fitCanvasText(ctx, label, width - 12), x + 6, headerY + 22);
+        x += width;
+        ctx.beginPath();
+        ctx.moveTo(x, headerY);
+        ctx.lineTo(x, headerY + tableHeaderHeight);
+        ctx.stroke();
+      });
+
+      const rows = statisticsRows.length ? statisticsRows : [["", "", "", "", "", "", "", "", "", ""]];
+      ctx.font = "14px Inter, Arial, sans-serif";
+      rows.forEach((row, rowIdx) => {
+        const y = headerY + tableHeaderHeight + rowIdx * rowHeight;
+        ctx.fillStyle = rowIdx % 2 ? "#ffffff" : "#fbfcff";
+        ctx.fillRect(tableLeft, y, tableWidth, rowHeight);
+        ctx.strokeStyle = "#e1e7f0";
+        ctx.strokeRect(tableLeft, y, tableWidth, rowHeight);
+        ctx.fillStyle = statisticsRows.length ? "#17202a" : "#687385";
+        x = tableLeft;
+        statisticsHeader.forEach((_, idx) => {
+          const width = colWidths[idx] || 90;
+          const value = statisticsRows.length ? row[idx] : (idx === 0 ? "No grouped statistics yet" : "");
+          ctx.fillText(fitCanvasText(ctx, value, width - 12), x + 6, y + 22);
+          x += width;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y + rowHeight);
+          ctx.stroke();
+        });
+      });
+
+      const jpegDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      return makeSingleImagePdfBlob(jpegDataUrl, canvas.width, canvas.height);
+    }
+
+    function makeSingleImagePdfBlob(jpegDataUrl, imageWidth, imageHeight) {
+      const encoder = new TextEncoder();
+      const jpegBytes = dataUrlToUint8Array(jpegDataUrl);
+      const pageWidth = 612;
+      const pageHeight = pageWidth * imageHeight / imageWidth;
+      const parts = [];
+      const offsets = [0];
+      let offset = 0;
+      const addBytes = (bytes) => {
+        parts.push(bytes);
+        offset += bytes.length;
+      };
+      const addText = (text) => addBytes(encoder.encode(text));
+      const addObject = (id, body) => {
+        offsets[id] = offset;
+        addText(`${id} 0 obj\n${body}\nendobj\n`);
+      };
+
+      addText("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+      addObject(1, "<< /Type /Catalog /Pages 2 0 R >>");
+      addObject(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+      addObject(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth.toFixed(2)} ${pageHeight.toFixed(2)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+
+      offsets[4] = offset;
+      addText(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`);
+      addBytes(jpegBytes);
+      addText("\nendstream\nendobj\n");
+
+      const content = `q\n${pageWidth.toFixed(2)} 0 0 ${pageHeight.toFixed(2)} 0 0 cm\n/Im0 Do\nQ\n`;
+      addObject(5, `<< /Length ${encoder.encode(content).length} >>\nstream\n${content}endstream`);
+
+      const xrefOffset = offset;
+      addText(`xref\n0 6\n0000000000 65535 f \n`);
+      for (let i = 1; i <= 5; i++) addText(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+      addText(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+      return new Blob(parts, { type: "application/pdf" });
+    }
+
     async function saveBlobToDirectory(directoryHandle, filename, blob) {
       const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
       const writable = await fileHandle.createWritable();
@@ -4835,6 +5038,9 @@
           artifacts.push({
             filename: `${prefix}_statistics_plot.png`,
             blob: await dataUrlToBlob(dataUrl)
+          }, {
+            filename: `${prefix}_statistics_panel.pdf`,
+            blob: await makeStatisticsPanelPdfBlob(dataUrl, statisticsHeader, statisticsRows)
           });
         }
         if (useDirectoryPicker && directoryHandle) {
@@ -5232,6 +5438,15 @@
       });
       el.detectPeaksBtn.addEventListener("click", () => detectPeaks(false));
       el.clearOverlayBtn.addEventListener("click", clearOverlay);
+      el.tiltOutput.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-apix-value]");
+        if (!button || !el.tiltOutput.contains(button)) return;
+        const value = Number(button.dataset.apixValue);
+        if (!Number.isFinite(value)) return;
+        setApix(value);
+        const label = button.dataset.apixLabel || "overlay pixel size";
+        setStatus(`Set result to ${label}: ${value.toFixed(4)} A/px.`);
+      });
       el.addToTableBtn.addEventListener("click", () => addTableRow({ replaceIndex: state.editingTableRow }));
       el.removeCurrentRowBtn.addEventListener("click", () => {
         const idx = state.editingTableRow;
