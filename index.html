@@ -683,6 +683,14 @@
       transform: none;
     }
 
+    .ellipse-fit-label {
+      color: #344256;
+      font-weight: 720;
+      cursor: help;
+      text-decoration: underline dotted rgba(104, 115, 133, 0.78);
+      text-underline-offset: 3px;
+    }
+
     .result-card .card-body {
       display: flex;
       flex-direction: column;
@@ -2957,7 +2965,7 @@
       updateTiltOutput();
     }
 
-    function updateOverlayFromPeaks(useDetectConvention = false) {
+    function updateOverlayFromPeaks() {
       const fft = state.fft;
       if (!fft || !state.region) return;
       const peaks = fft.peaks;
@@ -2995,8 +3003,7 @@
       const small = Math.min(fit.a, fit.b);
       const large = Math.max(fit.a, fit.b);
       const tilt = calculateTilt(small, large);
-      const apixAxis = useDetectConvention ? small : large;
-      const untiltedApix = apixAxis * resolution / fft.n;
+      const untiltedApix = small * resolution / fft.n;
       const originalApix = Math.sqrt(small * large) * resolution / fft.n;
       fft.shape = { type: "ellipse", a: fit.a, b: fit.b, theta: fit.theta };
       fft.tilt = { small, large, tilt, originalApix, untiltedApix, theta: fit.theta };
@@ -3019,6 +3026,23 @@
       return `<div>${escapeHtml(label)} ${html}</div>`;
     }
 
+    function ellipseFitLabelLine() {
+      return `<div><span class="ellipse-fit-label" data-ellipse-fit-info>Ellipse fitted:</span></div>`;
+    }
+
+    function ellipseFitMathHtml() {
+      return `
+        <div>Anchor peaks are fit with a fixed-center rotated ellipse.</div>
+        <div class="tip-equation">\\(\\frac{x_r^2}{r_a^2} + \\frac{y_r^2}{r_b^2} = 1\\)</div>
+        <div>\\(x_r = (x-c_x)\\cos\\theta + (y-c_y)\\sin\\theta\\)</div>
+        <div>\\(y_r = -(x-c_x)\\sin\\theta + (y-c_y)\\cos\\theta\\)</div>
+        <div>With \\(r_s = \\min(r_a,r_b)\\), \\(r_l = \\max(r_a,r_b)\\):</div>
+        <div class="tip-equation">\\(\\alpha = \\cos^{-1}(r_s/r_l)\\)</div>
+        <div class="tip-equation">\\(a_{orig}=d\\sqrt{r_s r_l}/N\\), \\(a_{corr}=d r_s/N\\)</div>
+        <div>The corrected pixel size uses the minor-axis radius, so it should be less than or equal to the circular-equivalent original estimate.</div>
+      `;
+    }
+
     function renderTiltOutput(lines) {
       el.tiltOutput.innerHTML = `<div class="tilt-output-lines">${lines.join("")}</div>`;
     }
@@ -3034,7 +3058,7 @@
           ? fft.tilt.originalApix
           : Math.sqrt(fft.tilt.small * fft.tilt.large) * getResolution() / fft.n;
         renderTiltOutput([
-          tiltLine("Ellipse fitted:"),
+          ellipseFitLabelLine(),
           tiltLine(`Minor axis: ${fft.tilt.small.toFixed(2)} px`),
           tiltLine(`Major axis: ${fft.tilt.large.toFixed(2)} px`),
           tiltLine(`Ellipse distortion angle: ${(fft.tilt.tilt * 180 / Math.PI).toFixed(2)} deg`),
@@ -3055,51 +3079,117 @@
       }
     }
 
+    function isFftLocalMaximum(fft, x, y, value) {
+      const n = fft.n;
+      const mag = fft.mag;
+      for (let yy = -2; yy <= 2; yy++) {
+        for (let xx = -2; xx <= 2; xx++) {
+          if (xx === 0 && yy === 0) continue;
+          if (mag[(y + yy) * n + x + xx] > value) return false;
+        }
+      }
+      return true;
+    }
+
+    function selectDetectedPeaks(candidates, n) {
+      candidates.sort((a, b) => b.v - a.v);
+      if (!candidates.length) return [];
+      const maxV = candidates[0].v;
+      const selected = [];
+      const minSpacing = Math.max(8, n / 128);
+      for (const c of candidates) {
+        if (selected.length >= 20) break;
+        if (selected.length >= 6 && c.v < maxV * 0.5) break;
+        if (!selected.some((p) => Math.hypot(p.x - c.x, p.y - c.y) < minSpacing)) selected.push(c);
+      }
+      return selected.slice(0, Math.max(6, Math.min(20, selected.length)));
+    }
+
+    function circularPeakCandidates(fft, targetRadius, band) {
+      const n = fft.n;
+      const cx = n / 2;
+      const cy = n / 2;
+      const mag = fft.mag;
+      const candidates = [];
+      const limit = Math.ceil(targetRadius + band + 2);
+      const xMin = clamp(Math.floor(cx - limit), 2, n - 3);
+      const xMax = clamp(Math.ceil(cx + limit), 2, n - 3);
+      const yMin = clamp(Math.floor(cy - limit), 2, n - 3);
+      const yMax = clamp(Math.ceil(cy + limit), 2, n - 3);
+      for (let y = yMin; y <= yMax; y++) {
+        for (let x = xMin; x <= xMax; x++) {
+          const r = Math.hypot(x - cx, y - cy);
+          if (r < targetRadius - band || r > targetRadius + band) continue;
+          const v = mag[y * n + x];
+          if (isFftLocalMaximum(fft, x, y, v)) candidates.push({ x, y, v });
+        }
+      }
+      return candidates;
+    }
+
+    function ellipsePeakCandidates(fft, shape, band) {
+      const n = fft.n;
+      const cx = n / 2;
+      const cy = n / 2;
+      const mag = fft.mag;
+      const candidates = [];
+      const a = Math.max(1, shape.a);
+      const b = Math.max(1, shape.b);
+      const smallAxis = Math.min(a, b);
+      const ct = Math.cos(shape.theta);
+      const st = Math.sin(shape.theta);
+      const limit = Math.ceil(Math.max(a, b) + band + 2);
+      const xMin = clamp(Math.floor(cx - limit), 2, n - 3);
+      const xMax = clamp(Math.ceil(cx + limit), 2, n - 3);
+      const yMin = clamp(Math.floor(cy - limit), 2, n - 3);
+      const yMax = clamp(Math.ceil(cy + limit), 2, n - 3);
+      for (let y = yMin; y <= yMax; y++) {
+        const dy = y - cy;
+        for (let x = xMin; x <= xMax; x++) {
+          const dx = x - cx;
+          const xr = dx * ct + dy * st;
+          const yr = -dx * st + dy * ct;
+          const ellipseRadius = Math.sqrt((xr * xr) / (a * a) + (yr * yr) / (b * b));
+          if (Math.abs(ellipseRadius - 1) * smallAxis > band) continue;
+          const v = mag[y * n + x];
+          if (isFftLocalMaximum(fft, x, y, v)) candidates.push({ x, y, v });
+        }
+      }
+      return candidates;
+    }
+
     function detectPeaks(silent = false) {
       const fft = state.fft;
       if (!fft || !state.region) return;
       const n = fft.n;
       const resolution = getResolution();
-      const apix = Number(el.apixExact.value) || Number(el.nominalApix.value) || 1;
-      const targetRadius = fft.n * apix / resolution;
-      const band = 10;
-      const cx = n / 2;
-      const cy = n / 2;
-      const candidates = [];
-      const mag = fft.mag;
-      for (let y = 2; y < n - 2; y++) {
-        for (let x = 2; x < n - 2; x++) {
-          const r = Math.hypot(x - cx, y - cy);
-          if (r < targetRadius - band || r > targetRadius + band) continue;
-          const v = mag[y * n + x];
-          let isMax = true;
-          for (let yy = -2; yy <= 2 && isMax; yy++) {
-            for (let xx = -2; xx <= 2; xx++) {
-              if (xx === 0 && yy === 0) continue;
-              if (mag[(y + yy) * n + x + xx] > v) {
-                isMax = false;
-                break;
-              }
-            }
-          }
-          if (isMax) candidates.push({ x, y, v });
-        }
-      }
-      candidates.sort((a, b) => b.v - a.v);
+      const hasEllipse = fft.shape && fft.shape.type === "ellipse";
+      const nominalApix = Number(el.nominalApix.value) || Number(el.apixExact.value) || 1;
+      const targetRadius = fft.n * nominalApix / resolution;
+      const band = hasEllipse ? 5 : 10;
+      const candidates = hasEllipse
+        ? ellipsePeakCandidates(fft, fft.shape, band)
+        : circularPeakCandidates(fft, targetRadius, band);
       if (!candidates.length) {
-        if (!silent) setStatus("No peaks found in the expected resolution band.");
+        if (!silent) {
+          setStatus(hasEllipse
+            ? "No peaks found within +/-5 px of the current ellipse."
+            : "No peaks found in the nominal pixel-size resolution band.");
+        }
         return;
       }
-      const maxV = candidates[0].v;
-      const selected = [];
-      for (const c of candidates) {
-        if (selected.length >= 20) break;
-        if (selected.length >= 6 && c.v < maxV * 0.5) break;
-        if (!selected.some((p) => Math.hypot(p.x - c.x, p.y - c.y) < Math.max(8, n / 128))) selected.push(c);
+      const selected = selectDetectedPeaks(candidates, n);
+      if (hasEllipse && selected.length < 3) {
+        if (!silent) setStatus(`Only ${selected.length} peak(s) found within +/-5 px of the current ellipse; keeping the existing overlay.`);
+        return;
       }
-      fft.peaks = selected.slice(0, Math.max(6, Math.min(20, selected.length))).map((p) => ({ x: p.x, y: p.y }));
-      updateOverlayFromPeaks(true);
-      if (!silent) setStatus(`Detected ${fft.peaks.length} FFT peaks near radius ${targetRadius.toFixed(1)} px.`);
+      fft.peaks = selected.map((p) => ({ x: p.x, y: p.y }));
+      updateOverlayFromPeaks();
+      if (!silent) {
+        setStatus(hasEllipse
+          ? `Refined ${fft.peaks.length} FFT peaks within +/-5 px of the current ellipse.`
+          : `Detected ${fft.peaks.length} FFT peaks near nominal radius ${targetRadius.toFixed(1)} px.`);
+      }
     }
 
     function clearOverlay() {
@@ -3788,7 +3878,7 @@
         ["#nufftThetaSampling", "Angular Sampling", "Higher values sample more angles around the FFT ring."],
         ["#nufftDisplayRange", "Display Range", "Controls the frequency window around the chosen reference resolution."],
         ["#contrast", "FFT Contrast", "Adjust display contrast for the 2D spectrum without changing the calculation."],
-        ["#detectPeaksBtn", "Detect Peaks", "Find candidate FFT peaks near the current pixel-size radius."],
+        ["#detectPeaksBtn", "Detect Peaks", "Find candidate FFT peaks near the nominal radius, or refine around the current ellipse when one is already shown."],
         ["#clearOverlayBtn", "Clear Overlay", "Remove manually added or detected FFT peaks."],
         ["#apixSlider", "Pixel Size", "Fine-tune the current calibrated pixel size."],
         ["#apixExact", "Exact Pixel Size", "Type an exact A/px value to set the result directly."],
@@ -4537,7 +4627,7 @@
         if (row.measurementPreviewType === "fft") {
           if (state.fft && row.fftPeaks && row.fftPeaks.length) {
             state.fft.peaks = row.fftPeaks.map((p) => ({ x: p.x, y: p.y }));
-            updateOverlayFromPeaks(false);
+            updateOverlayFromPeaks();
           }
           setApix(row.pixelSize);
         } else if (state.nufft && row.radialPeakFreq != null) {
@@ -5447,6 +5537,20 @@
         const label = button.dataset.apixLabel || "overlay pixel size";
         setStatus(`Set result to ${label}: ${value.toFixed(4)} A/px.`);
       });
+      el.tiltOutput.addEventListener("pointerover", (event) => {
+        const label = event.target.closest("[data-ellipse-fit-info]");
+        if (!label || !el.tiltOutput.contains(label)) return;
+        showHoverHtmlTip(event, "Ellipse Fit Math", ellipseFitMathHtml());
+      });
+      el.tiltOutput.addEventListener("pointermove", (event) => {
+        const label = event.target.closest("[data-ellipse-fit-info]");
+        if (label && el.tiltOutput.contains(label)) moveHoverTip(event);
+      });
+      el.tiltOutput.addEventListener("pointerout", (event) => {
+        const label = event.target.closest("[data-ellipse-fit-info]");
+        if (!label || label.contains(event.relatedTarget)) return;
+        hideHover();
+      });
       el.addToTableBtn.addEventListener("click", () => addTableRow({ replaceIndex: state.editingTableRow }));
       el.removeCurrentRowBtn.addEventListener("click", () => {
         const idx = state.editingTableRow;
@@ -5519,7 +5623,7 @@
         }
         if (removeIdx >= 0) fft.peaks.splice(removeIdx, 1);
         else fft.peaks.push(addPoint);
-        updateOverlayFromPeaks(false);
+        updateOverlayFromPeaks();
       });
 
     }
