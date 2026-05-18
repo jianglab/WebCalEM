@@ -4,13 +4,13 @@ WebCalEM is a browser-based TEM magnification calibration tool. It loads test sp
 
 ## Launch
 
-Open the hosted app: [WebCalEM on GitHub Pages](https://jianglab.github.io/magCalApp/)
+Open the hosted app: [WebCalEM on GitHub Pages](https://jianglab.github.io/WebCalEM/)
 
 For local development or offline testing, first clone the repo:
 
 ```bash
-git clone https://github.com/jianglab/magCalApp.git
-cd magCalApp
+git clone https://github.com/jianglab/WebCalEM.git
+cd WebCalEM
 ```
 
 Then serve the repo folder with:
