@@ -1240,7 +1240,7 @@
             </div>
             <div class="stack input-main" id="urlControls">
               <label id="downloadUrlLabel" for="downloadUrl">Download URL</label>
-              <input id="downloadUrl" type="text" value="https://raw.githubusercontent.com/jianglab/magCalApp/008ab91715945e3a52355ed2be64bb8bc027cc13/test_image/130k-Pixel0.75A.tiff">
+              <input id="downloadUrl" type="text" value="test_image/130k-Pixel0.75A.tiff" data-default-local="test_image/130k-Pixel0.75A.tiff" data-default-remote="https://jianglab.github.io/WebCalEM/test_image/130k-Pixel0.75A.tiff">
             </div>
             <div class="hidden input-main" id="uploadControls">
               <div class="upload-header">
@@ -1449,14 +1449,14 @@
   </div>
   <div id="zoomBox" class="zoom-box hidden"></div>
 
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="vendor/plotly-2.35.2.min.js"></script>
   <script>
     window.MathJax = {
       tex: { inlineMath: [["\\(", "\\)"], ["$", "$"]] },
       svg: { fontCache: "global" }
     };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+  <script src="vendor/mathjax-tex-svg.js" async></script>
   <script id="app-script">
   (() => {
     "use strict";
@@ -1467,6 +1467,8 @@
     const PLOT_TEXT = "#283c5f";
     const PLOT_LINE = "#5b6dfb";
     const SPECIMEN_COLORS = ["#8ecae6", "#e58a8c", "#84cc9b", "#f2c46d", "#b59be8", "#7dd3fc"];
+    const DEFAULT_LOCAL_TEST_IMAGE = "test_image/130k-Pixel0.75A.tiff";
+    const DEFAULT_REMOTE_TEST_IMAGE = "https://jianglab.github.io/WebCalEM/test_image/130k-Pixel0.75A.tiff";
     const PLOTLY_CONFIG = {
       responsive: true,
       scrollZoom: true,
@@ -2301,8 +2303,17 @@
       return decodeRasterWithBrowser(buffer, mime || "image/png");
     }
 
+    function imageUrlObject(value) {
+      try {
+        return new URL(value, window.location.href);
+      } catch {
+        return null;
+      }
+    }
+
     function urlSourceKey(url) {
-      return `url:${url}`;
+      const resolved = imageUrlObject(url);
+      return `url:${resolved ? resolved.href : url}`;
     }
 
     function uploadSourceKey(file, idx) {
@@ -3855,10 +3866,10 @@
 
     function setupComponentTips() {
       const tips = [
-        ["#methodUrlLabel", "URL Input", "Paste a direct image link. The app loads it automatically after the URL is complete."],
+        ["#methodUrlLabel", "URL Input", "Paste a direct image link or a local repo image path. The app loads it automatically after the URL is complete."],
         ["#methodUploadLabel", "Upload Input", "Use local image files when the data is already on this computer."],
-        ["#downloadUrlLabel", "Download URL", "Paste a TIFF, MRC, PNG, or JPEG URL. Loading and decoding happen locally in your browser."],
-        ["#downloadUrl", "Download URL", "Paste a TIFF, MRC, PNG, or JPEG URL. The app starts loading automatically after a short pause."],
+        ["#downloadUrlLabel", "Download URL", "Paste a TIFF, MRC, PNG, or JPEG URL, or a local repo path such as test_image/example.tiff. Loading and decoding happen locally in your browser."],
+        ["#downloadUrl", "Download URL", "Paste a TIFF, MRC, PNG, JPEG URL, or local repo path. The app starts loading automatically after a short pause."],
         ["#fileInputLabel", "Upload Images", "Browse for local image files. The table estimates nominal pixel size from filenames when possible."],
         [".browse-button", "Browse", "Choose one or more local TIFF, MRC, PNG, or JPEG files."],
         ["#autoSample", "Autosample", "When enabled, each uploaded image is split into sampled regions and automatically added to the statistics table."],
@@ -5156,11 +5167,34 @@
     }
 
     function isValidUrl(value) {
-      try {
-        const url = new URL(value);
-        return url.protocol === "http:" || url.protocol === "https:";
-      } catch {
-        return false;
+      const url = imageUrlObject(value);
+      return !!url && (url.protocol === "http:" || url.protocol === "https:");
+    }
+
+    function localPathBlockedByFileUrl(value) {
+      const url = imageUrlObject(value);
+      return !!url && url.protocol === "file:";
+    }
+
+    function urlInvalidMessage(value) {
+      if (localPathBlockedByFileUrl(value)) {
+        return "Local repo paths cannot auto-load from a directly opened file. Start a local server with python -m http.server 8766, or use Upload > Browse.";
+      }
+      return "URL is invalid. Paste an http(s) image URL or local repo path.";
+    }
+
+    function imageUrlName(value) {
+      const url = imageUrlObject(value);
+      if (!url) return "downloaded_image";
+      return decodeURIComponent(url.pathname.split("/").pop() || "downloaded_image");
+    }
+
+    function configureInitialUrl() {
+      const current = el.downloadUrl.value.trim();
+      const localDefault = el.downloadUrl.dataset.defaultLocal || DEFAULT_LOCAL_TEST_IMAGE;
+      const remoteDefault = el.downloadUrl.dataset.defaultRemote || DEFAULT_REMOTE_TEST_IMAGE;
+      if (window.location.protocol === "file:" && current === localDefault) {
+        el.downloadUrl.value = remoteDefault;
       }
     }
 
@@ -5170,11 +5204,11 @@
       const url = el.downloadUrl.value.trim();
       const token = ++state.urlLoadToken;
       if (!url) {
-        state.urlLoadTimer = setTimeout(() => setStatus("Paste an image URL to load."), delay);
+        state.urlLoadTimer = setTimeout(() => setStatus("Paste an image URL or local repo path to load."), delay);
         return;
       }
       if (!isValidUrl(url)) {
-        state.urlLoadTimer = setTimeout(() => setStatus("URL is invalid. Paste a complete http(s) image URL."), delay);
+        state.urlLoadTimer = setTimeout(() => setStatus(urlInvalidMessage(url)), delay);
         return;
       }
       const currentUrlLoaded = state.image && state.image.sourceKey === urlSourceKey(url);
@@ -5188,11 +5222,11 @@
     async function loadUrl(force = false, scheduledToken = null) {
       const url = el.downloadUrl.value.trim();
       if (!url) {
-        setStatus("Paste an image URL to load.");
+        setStatus("Paste an image URL or local repo path to load.");
         return;
       }
       if (!isValidUrl(url)) {
-        setStatus("URL is invalid. Paste a complete http(s) image URL.");
+        setStatus(urlInvalidMessage(url));
         return;
       }
       const currentUrlLoaded = state.image && state.image.sourceKey === urlSourceKey(url);
@@ -5202,12 +5236,13 @@
       }
       const token = scheduledToken ?? ++state.urlLoadToken;
       try {
-        setStatus(`Downloading ${url}...`);
-        const response = await fetch(url);
+        const resolvedUrl = imageUrlObject(url);
+        setStatus(`Loading ${url}...`);
+        const response = await fetch(resolvedUrl.href);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const buffer = await response.arrayBuffer();
         if (token !== state.urlLoadToken) return;
-        const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "downloaded_image");
+        const name = imageUrlName(url);
         const decoded = await decodeImageBuffer(name, buffer, response.headers.get("content-type") || "");
         if (token !== state.urlLoadToken) return;
         state.lastLoadedUrl = url;
@@ -5215,7 +5250,10 @@
       } catch (err) {
         if (token !== state.urlLoadToken) return;
         console.error(err);
-        setStatus(`URL load failed: ${err.message}`);
+        const fileOpenHint = window.location.protocol === "file:"
+          ? " Direct-file mode needs internet for the hosted default image; for offline use, start a local server with python -m http.server 8766 or use Upload > Browse."
+          : "";
+        setStatus(`URL load failed: ${err.message}.${fileOpenHint}`);
       }
     }
 
@@ -5648,6 +5686,7 @@
       el.nufftRangeLabel.textContent = Number(el.nufftDisplayRange.value).toFixed(1);
       el.contrastLabel.textContent = Number(el.contrast.value).toFixed(1);
       updateAutoSampleControls();
+      configureInitialUrl();
       loadUrl(true);
     }
 

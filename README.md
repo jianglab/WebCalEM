@@ -25,7 +25,9 @@ Then open:
 http://127.0.0.1:8766/
 ```
 
-The app is contained in `index.html`. The local server only serves static files; you do not need to install the old Python app dependencies. You can also download the repo as a ZIP, unzip it, open a terminal in that folder, and run the same `python -m http.server 8766` command.
+The app is contained in `index.html`. The local server only serves static files; you do not need to install the old Python app dependencies. Plotly and MathJax are bundled in `vendor/`, so local plotting and equation hints work without internet access. You can also download the repo as a ZIP, unzip it, open a terminal in that folder, and run the same `python -m http.server 8766` command.
+
+Avoid launching by double-clicking `index.html` for offline use. Browsers block automatic loading of bundled local image paths from `file://` pages, so use the local server command above or switch to Upload and click Browse.
 
 ## Basic Workflow
 
@@ -49,7 +51,7 @@ The app is contained in `index.html`. The local server only serves static files;
 
 ## Test Data
 
-The `test_image` folder includes sample TIFF images for quick validation. The default URL in the app points to a graphene test image with a nominal pixel size around 0.75 A/px.
+The `test_image` folder includes sample TIFF images for quick validation. The default image path in the app points to `test_image/130k-Pixel0.75A.tiff`, a graphene test image with a nominal pixel size around 0.75 A/px.
 
 ## Notes
 
